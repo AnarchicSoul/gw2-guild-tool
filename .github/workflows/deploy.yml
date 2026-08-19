@@ -2,10 +2,35 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
+  terraform:
+    name: Terraform (infra Cloudflare)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    env:
+      TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      TF_VAR_encryption_key: ${{ secrets.GW2_ENCRYPTION_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.15.0"
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - run: terraform init
+
+      - run: terraform apply -auto-approve
+
   deploy-api:
+    name: Deploy Worker code (wrangler)
+    needs: terraform
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -21,11 +46,6 @@ jobs:
 
       - run: npm install
 
-      # Idempotent : garde le secret du Worker synchro avec GitHub, utile
-      # aussi si on doit un jour redéployer sur un compte Cloudflare vierge.
-      - name: Sync ENCRYPTION_KEY secret
-        run: npx wrangler secret put ENCRYPTION_KEY <<< "${{ secrets.GW2_ENCRYPTION_KEY }}"
-
       # CREATE TABLE IF NOT EXISTS partout dans schema.sql : sans danger à rejouer.
       - name: Apply D1 schema
         run: npx wrangler d1 execute gw2-guild-tool-dev --remote --file=./schema.sql
@@ -34,6 +54,7 @@ jobs:
         run: npx wrangler deploy
 
   deploy-gui:
+    name: Deploy GUI (GitHub Pages)
     runs-on: ubuntu-latest
     permissions:
       pages: write

@@ -9,6 +9,12 @@
 .wrangler/
 api/node_modules/
 
+# Terraform
+terraform/.terraform/
+*.tfstate
+*.tfstate.*
+
 # Système
 .DS_Store
 Thumbs.db
+.claude/
