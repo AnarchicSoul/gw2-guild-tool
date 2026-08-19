@@ -41,6 +41,14 @@ resource "cloudflare_d1_database" "gw2_guild_db" {
 # api/wrangler.toml et le workflow GitHub Actions) — d'où le contenu
 # placeholder ci-dessous et le lifecycle qui l'ignore pour ne jamais écraser
 # ce que wrangler a déployé.
+#
+# ⚠️ PIÈGE : l'API Cloudflare ne supporte pas de patch partiel des bindings —
+# chaque update (même juste `bindings`) réenvoie la totalité du script, avec
+# le contenu tel qu'il est dans le STATE Terraform (donc le placeholder,
+# ignore_changes n'empêchant que la détection de diff, pas ce ré-envoi). Un
+# `terraform apply` isolé régresse donc toujours le Worker vers le placeholder
+# — TOUJOURS le faire suivre d'un `wrangler deploy` (c'est déjà l'ordre dans
+# le workflow CI : job `terraform` puis job `deploy-api`).
 resource "cloudflare_workers_script" "gw2_guild_api" {
   account_id  = var.cloudflare_account_id
   script_name = "gw2-guild-api-${var.environment}"
