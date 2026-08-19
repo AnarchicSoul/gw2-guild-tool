@@ -42,12 +42,16 @@ C'est le plafond dur du runtime Cloudflare Workers pour `crypto.subtle.deriveBit
 **Terraform gère l'infrastructure, `wrangler` gère le code.**
 Le state Terraform vit sur Terraform Cloud (workspace en exécution distante) — seul le dossier `terraform/` est envoyé aux runners, donc le contenu du Worker ne peut pas y être référencé en relatif. Le `cloudflare_workers_script` est créé avec un contenu placeholder et un `lifecycle.ignore_changes` sur les champs de code : Terraform possède les bindings, l'observabilité, la config — jamais le contenu applicatif, qui reste sous le contrôle exclusif de `wrangler deploy` en CI.
 
+**Observabilité et analytics, tout en free tier.**
+Logs + traces via `observability` (Workers Logs, 200k events/jour), et un dataset **Workers Analytics Engine** (`gw2_guild_tool_events`, 100k points/jour) qui suit les événements métier (inscriptions, connexions, liaisons GW2 réussies/échouées, requêtes de matching) via `writeDataPoint()` fire-and-forget — interrogeable en SQL via `/accounts/{id}/analytics_engine/sql` ou le dashboard Cloudflare.
+
 ## Stack
 
 | Composant | Techno |
 |---|---|
 | API | Cloudflare Workers (JS, modules ES) |
 | Base de données | Cloudflare D1 (SQLite) |
+| Analytics | Cloudflare Workers Analytics Engine |
 | Frontend | HTML/CSS/JS vanilla, aucun framework |
 | Hébergement frontend | GitHub Pages |
 | Infra as Code | Terraform (provider `cloudflare/cloudflare` ~5.0) |
