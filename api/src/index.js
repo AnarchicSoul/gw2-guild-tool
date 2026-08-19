@@ -83,7 +83,10 @@ async function handleRegister(request, env) {
   if (cooldownError) return cooldownError;
 
   const existing = await env.DB.prepare("SELECT id FROM accounts WHERE email = ?").bind(email).first();
-  if (existing) return json({ error: "Un compte existe déjà avec cet email." }, 409);
+  if (existing) {
+    trackEvent(env, "register", "email_taken");
+    return json({ error: "Un compte existe déjà avec cet email." }, 409);
+  }
 
   const { hash, salt } = await hashPassword(password);
   const id = crypto.randomUUID();
@@ -91,6 +94,7 @@ async function handleRegister(request, env) {
     .bind(id, email, hash, salt)
     .run();
 
+  trackEvent(env, "register", "success");
   return startSession(env, id, email);
 }
 
@@ -113,12 +117,17 @@ async function handleLogin(request, env) {
 
   if (!account) {
     await hashPassword(password); // temps constant : évite de révéler que l'email n'existe pas
+    trackEvent(env, "login", "failure");
     return genericError();
   }
 
   const ok = await verifyPassword(password, account.password_salt, account.password_hash);
-  if (!ok) return genericError();
+  if (!ok) {
+    trackEvent(env, "login", "failure");
+    return genericError();
+  }
 
+  trackEvent(env, "login", "success");
   return startSession(env, account.id, account.email);
 }
 
@@ -186,6 +195,7 @@ async function handleLinkGw2(request, env) {
 
   const owner = await env.DB.prepare("SELECT account_id FROM gw2_links WHERE id = ?").bind(gw2Account.id).first();
   if (owner && owner.account_id !== account.id) {
+    trackEvent(env, "gw2_link", "already_linked");
     return json({ error: "Ce compte GW2 est déjà lié à un autre compte." }, 409);
   }
 
@@ -201,6 +211,7 @@ async function handleLinkGw2(request, env) {
     await env.DB.prepare("INSERT INTO user_guilds (gw2_link_id, guild_id) VALUES (?, ?)").bind(gw2Account.id, guildId).run();
   }
 
+  trackEvent(env, "gw2_link", "success");
   return json({ id: gw2Account.id, name: gw2Account.name, guilds: guildIds });
 }
 
@@ -225,6 +236,8 @@ async function handleUnlinkGw2(request, env) {
 async function handleGuildMatches(request, env) {
   const account = await requireSession(request, env);
   if (account instanceof Response) return account;
+
+  trackEvent(env, "guild_matches", "query");
 
   const myLinks = await env.DB.prepare("SELECT id FROM gw2_links WHERE account_id = ?").bind(account.id).all();
   const myLinkIds = myLinks.results.map((r) => r.id);
@@ -368,6 +381,22 @@ function bytesToB64Url(bytes) {
 
 function b64ToBytes(b64) {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+
+// --- Analytics (Workers Analytics Engine, gratuit : 100k points/jour) ---
+
+function trackEvent(env, eventType, outcome) {
+  // Pas d'await : l'écriture est fire-and-forget, ne doit jamais ralentir
+  // ni faire échouer une requête si le binding est absent ou en erreur.
+  try {
+    env.ANALYTICS?.writeDataPoint({
+      indexes: [eventType],
+      blobs: [outcome],
+      doubles: [1],
+    });
+  } catch (err) {
+    console.log(`analytics write failed: ${err}`);
+  }
 }
 
 function json(data, status = 200, extraHeaders = {}) {

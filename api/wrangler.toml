@@ -14,3 +14,7 @@ invocation_logs = true
 binding = "DB"
 database_name = "gw2-guild-tool-dev"
 database_id = "8b34ecb8-4136-43f9-96e9-2424a8825062"
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "gw2_guild_tool_events"

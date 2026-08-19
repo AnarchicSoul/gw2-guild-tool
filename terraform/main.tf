@@ -81,6 +81,11 @@ resource "cloudflare_workers_script" "gw2_guild_api" {
       name = "ENCRYPTION_KEY"
       type = "secret_text"
       text = var.encryption_key
+    },
+    {
+      name    = "ANALYTICS"
+      type    = "analytics_engine"
+      dataset = "gw2_guild_tool_events"
     }
   ]
 
