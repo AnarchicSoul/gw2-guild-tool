@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registre de guilde — GW2</title>
+<style>
+  :root {
+    --parchment: #f3ecd9;
+    --surface: #fbf7ec;
+    --surface-2: #efe6cc;
+    --line: #ddd0ac;
+    --ink: #241f17;
+    --ink-dim: #6b6047;
+    --gold: #96701e;
+    --gold-strong: #7a5a17;
+    --danger: #8a2f1f;
+    --danger-bg: #f6e4de;
+    --rank-1: #96701e;
+    --rank-2: #4c5a3f;
+    --rank-3: #3f5566;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --parchment: #14110d;
+      --surface: #1c1811;
+      --surface-2: #262015;
+      --line: #3c331f;
+      --ink: #ece4d0;
+      --ink-dim: #a89a78;
+      --gold: #e0b354;
+      --gold-strong: #f0c874;
+      --danger: #e0897a;
+      --danger-bg: #3a2119;
+      --rank-1: #e0b354;
+      --rank-2: #9db98a;
+      --rank-3: #8fb6cf;
+    }
+  }
+  :root[data-theme="dark"] {
+    --parchment: #14110d;
+    --surface: #1c1811;
+    --surface-2: #262015;
+    --line: #3c331f;
+    --ink: #ece4d0;
+    --ink-dim: #a89a78;
+    --gold: #e0b354;
+    --gold-strong: #f0c874;
+    --danger: #e0897a;
+    --danger-bg: #3a2119;
+    --rank-1: #e0b354;
+    --rank-2: #9db98a;
+    --rank-3: #8fb6cf;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 2.5rem 1.5rem 5rem;
+    background: var(--parchment);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+  }
+
+  main {
+    width: 100%;
+    max-width: 640px;
+  }
+
+  header {
+    margin-bottom: 2rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 2px solid var(--gold);
+  }
+
+  h1 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    font-size: 1.9rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+  }
+
+  header p {
+    margin: 0;
+    color: var(--ink-dim);
+    font-size: 0.95rem;
+  }
+
+  section {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+
+  section h2 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.9rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  section h2 .step {
+    font-size: 0.7rem;
+    color: var(--gold);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+    font-weight: 700;
+  }
+
+  label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--ink-dim);
+    margin-bottom: 0.4rem;
+    letter-spacing: 0.02em;
+  }
+
+  .key-row {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  input[type="password"],
+  input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--surface-2);
+    color: var(--ink);
+    font-size: 0.92rem;
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  }
+
+  input[type="password"]:focus,
+  input[type="text"]:focus {
+    outline: 2px solid var(--gold);
+    outline-offset: 1px;
+  }
+
+  button {
+    padding: 0.6rem 1.1rem;
+    border: 1px solid var(--gold-strong);
+    border-radius: 3px;
+    background: var(--gold);
+    color: var(--surface);
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  button:hover { background: var(--gold-strong); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+  button.ghost {
+    background: transparent;
+    color: var(--gold);
+    border-color: var(--line);
+  }
+  button.ghost:hover { background: var(--surface-2); }
+
+  .hint {
+    font-size: 0.78rem;
+    color: var(--ink-dim);
+    margin-top: 0.6rem;
+    line-height: 1.5;
+  }
+  .hint a { color: var(--gold); }
+
+  .msg {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+    display: none;
+  }
+  .msg.error {
+    display: block;
+    background: var(--danger-bg);
+    color: var(--danger);
+    border: 1px solid var(--danger);
+  }
+  .msg.info {
+    display: block;
+    background: var(--surface-2);
+    color: var(--ink-dim);
+    border: 1px solid var(--line);
+  }
+
+  #guild-picker { display: none; }
+  #guild-picker.visible { display: block; }
+
+  .combobox { position: relative; }
+
+  #guild-filter {
+    width: 100%;
+  }
+
+  #guild-list {
+    list-style: none;
+    margin: 0.5rem 0 0;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    max-height: 220px;
+    overflow-y: auto;
+    background: var(--surface-2);
+  }
+
+  #guild-list li {
+    padding: 0.55rem 0.75rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-size: 0.9rem;
+    border-bottom: 1px solid var(--line);
+  }
+  #guild-list li:last-child { border-bottom: none; }
+  #guild-list li:hover,
+  #guild-list li.active {
+    background: var(--gold);
+    color: var(--surface);
+  }
+  #guild-list li .tag {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+    font-size: 0.78rem;
+    opacity: 0.75;
+  }
+  #guild-list .empty {
+    padding: 0.75rem;
+    color: var(--ink-dim);
+    cursor: default;
+  }
+  #guild-list .empty:hover { background: none; color: var(--ink-dim); }
+
+  #roster-section { display: none; }
+  #roster-section.visible { display: block; }
+
+  .roster-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .roster-head .count {
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-dim);
+    font-size: 0.85rem;
+  }
+
+  #member-filter { margin-bottom: 0.9rem; }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+  }
+
+  thead th {
+    text-align: left;
+    padding: 0.55rem 0.75rem;
+    background: var(--surface-2);
+    color: var(--ink-dim);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--line);
+    position: sticky;
+    top: 0;
+  }
+
+  tbody td {
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+
+  td.name { font-weight: 500; }
+  td.joined {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-dim);
+    white-space: nowrap;
+  }
+  td.wvw { text-align: center; }
+
+  .rank-pill {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    border: 1px solid currentColor;
+  }
+  .rank-pill.tier-0 { color: var(--rank-1); }
+  .rank-pill.tier-1 { color: var(--rank-2); }
+  .rank-pill.tier-2 { color: var(--rank-3); }
+
+  .spinner {
+    display: inline-block;
+    width: 0.9em;
+    height: 0.9em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: -0.15em;
+    margin-right: 0.4em;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; }
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #group-section { margin-top: 1.25rem; }
+
+  .participant-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .participant-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .participant-row input[type="text"].p-name {
+    flex: 0 0 32%;
+    min-width: 0;
+  }
+
+  .participant-row input[type="password"].p-key {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .participant-row .p-status {
+    font-size: 0.85rem;
+    width: 1.3rem;
+    text-align: center;
+    flex: none;
+  }
+
+  .participant-row .remove-row {
+    flex: none;
+    padding: 0.4rem 0.6rem;
+    background: transparent;
+    border-color: var(--line);
+    color: var(--danger);
+  }
+  .participant-row .remove-row:hover { background: var(--danger-bg); }
+
+  .group-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+  }
+
+  #group-results { margin-top: 1rem; }
+
+  .achv-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .achv-card {
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 0.7rem 0.85rem;
+    background: var(--surface-2);
+  }
+
+  .achv-card .achv-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+  }
+
+  .achv-card .achv-name {
+    font-weight: 600;
+    font-size: 0.94rem;
+  }
+
+  .achv-card .achv-rank {
+    display: inline-block;
+    min-width: 1.6em;
+    color: var(--ink-dim);
+    font-variant-numeric: tabular-nums;
+    margin-right: 0.15em;
+  }
+
+  .achv-card .achv-points {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--gold);
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+
+  .achv-card .achv-desc {
+    font-size: 0.82rem;
+    color: var(--ink-dim);
+    margin-top: 0.3rem;
+    line-height: 1.5;
+  }
+
+  .achv-card .achv-progress {
+    font-size: 0.74rem;
+    color: var(--ink-dim);
+    margin-top: 0.45rem;
+  }
+
+  footer {
+    margin-top: 2rem;
+    font-size: 0.76rem;
+    color: var(--ink-dim);
+    text-align: center;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Registre de guilde</h1>
+    <p>Consulte le registre des membres des guildes dont tu es meneur — directement via l'API officielle Guild Wars 2.</p>
+  </header>
+
+  <section id="key-section">
+    <h2><span class="step">Étape 1</span> Clé API</h2>
+    <label for="api-key">Clé API (scopes <code>account</code> + <code>guilds</code>)</label>
+    <div class="key-row">
+      <input type="password" id="api-key" placeholder="XXXXXXXX-XXXX-XXXX-...-XXXXXXXXXXXX" autocomplete="off">
+      <button type="button" id="toggle-key" class="ghost">Afficher</button>
+      <button type="button" id="load-guilds">Charger mes guildes</button>
+    </div>
+    <p class="hint">
+      Génère une clé sur <a href="https://account.arena.net/applications" target="_blank" rel="noopener">account.arena.net/applications</a> avec au minimum les scopes <code>account</code> et <code>guilds</code>. Elle n'est utilisée que pour appeler <code>api.guildwars2.com</code> directement depuis ce fichier — rien n'est envoyé ailleurs ni conservé après fermeture de la page.
+    </p>
+    <div class="msg" id="key-msg"></div>
+  </section>
+
+  <section id="guild-picker">
+    <h2><span class="step">Étape 2</span> Choisis une guilde</h2>
+    <div class="combobox">
+      <label for="guild-filter">Guildes dont tu es meneur</label>
+      <input type="text" id="guild-filter" placeholder="Filtrer par nom ou tag…" autocomplete="off">
+      <ul id="guild-list"></ul>
+    </div>
+  </section>
+
+  <section id="roster-section">
+    <h2><span class="step">Étape 3</span> <span id="roster-title">Registre</span></h2>
+    <div class="roster-head">
+      <label for="member-filter" style="margin-bottom:0;">Filtrer les membres</label>
+      <span class="count" id="roster-count"></span>
+    </div>
+    <input type="text" id="member-filter" placeholder="Rechercher un membre…" autocomplete="off">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Membre</th>
+            <th>Rang</th>
+            <th>Rejoint le</th>
+            <th>WvW</th>
+          </tr>
+        </thead>
+        <tbody id="roster-body"></tbody>
+      </table>
+    </div>
+    <div class="msg" id="roster-msg"></div>
+  </section>
+
+  <section id="group-section">
+    <h2><span class="step">Étape 4</span> Activité commune</h2>
+    <p class="hint" style="margin-top:0;">
+      Ajoute la clé API de chaque membre volontaire (scopes <code>account</code> + <code>progression</code>). On cherche les hauts-faits qu'aucun d'entre vous n'a encore terminés, parmi ceux qu'au moins l'un de vous a déjà entamés — de bons candidats pour une sortie de groupe.
+    </p>
+    <div class="participant-list" id="participant-list"></div>
+    <div class="group-actions">
+      <button type="button" class="ghost" id="prefill-roster">Pré-remplir depuis le registre</button>
+      <button type="button" class="ghost" id="add-participant">+ Ajouter un participant</button>
+      <button type="button" id="analyze-group">Analyser le groupe</button>
+    </div>
+    <div class="msg" id="group-msg"></div>
+    <div id="group-results"></div>
+  </section>
+
+  <footer>
+    Appelle directement <code>api.guildwars2.com</code> depuis ce fichier local. Aucun serveur, aucun tiers.
+  </footer>
+</main>
+
+<script>
+  const API = "https://api.guildwars2.com/v2";
+
+  const $ = (id) => document.getElementById(id);
+  const keyInput = $("api-key");
+  const toggleKeyBtn = $("toggle-key");
+  const loadGuildsBtn = $("load-guilds");
+  const keyMsg = $("key-msg");
+  const guildPicker = $("guild-picker");
+  const guildFilter = $("guild-filter");
+  const guildList = $("guild-list");
+  const rosterSection = $("roster-section");
+  const rosterTitle = $("roster-title");
+  const rosterBody = $("roster-body");
+  const rosterCount = $("roster-count");
+  const rosterMsg = $("roster-msg");
+  const memberFilter = $("member-filter");
+
+  let myGuilds = [];       // [{id, name, tag}]
+  let currentMembers = []; // [{name, rank, joined, wvw_member}]
+
+  toggleKeyBtn.addEventListener("click", () => {
+    const show = keyInput.type === "password";
+    keyInput.type = show ? "text" : "password";
+    toggleKeyBtn.textContent = show ? "Masquer" : "Afficher";
+  });
+
+  function setMsg(el, text, type) {
+    el.className = "msg" + (type ? " " + type : "");
+    el.textContent = text || "";
+    if (!text) el.className = "msg";
+  }
+
+  async function apiGet(path, needsAuth) {
+    const key = keyInput.value.trim();
+    const url = API + path + (needsAuth ? (path.includes("?") ? "&" : "?") + "access_token=" + encodeURIComponent(key) : "");
+    const res = await fetch(url);
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).text || ""; } catch (e) {}
+      const err = new Error(detail || ("HTTP " + res.status));
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  }
+
+  loadGuildsBtn.addEventListener("click", async () => {
+    const key = keyInput.value.trim();
+    setMsg(keyMsg, "");
+    if (!key) {
+      setMsg(keyMsg, "Colle d'abord une clé API.", "error");
+      return;
+    }
+    loadGuildsBtn.disabled = true;
+    loadGuildsBtn.innerHTML = '<span class="spinner"></span>Chargement…';
+    guildPicker.classList.remove("visible");
+    rosterSection.classList.remove("visible");
+
+    try {
+      const account = await apiGet("/account", true);
+      const leaderIds = account.guild_leader || [];
+      if (leaderIds.length === 0) {
+        setMsg(keyMsg, "Cette clé n'est meneur d'aucune guilde.", "error");
+        return;
+      }
+      const details = await Promise.all(
+        leaderIds.map((id) => apiGet("/guild/" + id, false).then((g) => ({ id, name: g.name, tag: g.tag })))
+      );
+      myGuilds = details.sort((a, b) => a.name.localeCompare(b.name));
+      renderGuildList(myGuilds);
+      guildPicker.classList.add("visible");
+      guildFilter.value = "";
+      guildFilter.focus();
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) {
+        setMsg(keyMsg, "Clé invalide ou scopes insuffisants (il faut account + guilds).", "error");
+      } else {
+        setMsg(keyMsg, "Erreur : " + e.message, "error");
+      }
+    } finally {
+      loadGuildsBtn.disabled = false;
+      loadGuildsBtn.textContent = "Charger mes guildes";
+    }
+  });
+
+  function renderGuildList(guilds) {
+    guildList.innerHTML = "";
+    if (guilds.length === 0) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "Aucune correspondance.";
+      guildList.appendChild(li);
+      return;
+    }
+    guilds.forEach((g) => {
+      const li = document.createElement("li");
+      li.tabIndex = 0;
+      li.innerHTML = "<span>" + escapeHtml(g.name) + "</span><span class=\"tag\">[" + escapeHtml(g.tag) + "]</span>";
+      li.addEventListener("click", () => selectGuild(g));
+      li.addEventListener("keydown", (e) => { if (e.key === "Enter") selectGuild(g); });
+      guildList.appendChild(li);
+    });
+  }
+
+  guildFilter.addEventListener("input", () => {
+    const q = guildFilter.value.trim().toLowerCase();
+    const filtered = myGuilds.filter(
+      (g) => g.name.toLowerCase().includes(q) || g.tag.toLowerCase().includes(q)
+    );
+    renderGuildList(filtered);
+  });
+
+  async function selectGuild(guild) {
+    rosterSection.classList.add("visible");
+    rosterTitle.textContent = guild.name + " [" + guild.tag + "]";
+    rosterBody.innerHTML = "";
+    rosterCount.textContent = "";
+    setMsg(rosterMsg, "Chargement du registre…", "info");
+    memberFilter.value = "";
+
+    try {
+      const [members, ranksRaw] = await Promise.all([
+        apiGet("/guild/" + guild.id + "/members", true),
+        apiGet("/guild/" + guild.id + "/ranks", true).catch(() => []),
+      ]);
+      const sortedRanks = ranksRaw.slice().sort((a, b) => a.order - b.order);
+      const rankOrder = {}; // rank id -> real "order" value, for correct sorting
+      const rankIndex = {}; // rank id -> position among sorted ranks, for pill color tier
+      sortedRanks.forEach((r, i) => { rankOrder[r.id] = r.order; rankIndex[r.id] = i; });
+
+      currentMembers = members
+        .slice()
+        .sort((a, b) => {
+          const ra = rankOrder[a.rank] ?? Infinity;
+          const rb = rankOrder[b.rank] ?? Infinity;
+          if (ra !== rb) return ra - rb;
+          return a.name.localeCompare(b.name);
+        })
+        .map((m) => ({ ...m, tier: Math.min(rankIndex[m.rank] ?? 2, 2) }));
+
+      renderRoster(currentMembers);
+      setMsg(rosterMsg, "");
+    } catch (e) {
+      if (e.status === 403) {
+        setMsg(rosterMsg, "Accès refusé — cette clé n'a pas les droits sur le registre de cette guilde.", "error");
+      } else {
+        setMsg(rosterMsg, "Erreur : " + e.message, "error");
+      }
+    }
+  }
+
+  function renderRoster(members) {
+    rosterBody.innerHTML = "";
+    rosterCount.textContent = members.length + (members.length > 1 ? " membres" : " membre");
+    members.forEach((m) => {
+      const tr = document.createElement("tr");
+      const joined = m.joined ? new Date(m.joined).toLocaleDateString("fr-FR") : "—";
+      tr.innerHTML =
+        '<td class="name">' + escapeHtml(m.name) + "</td>" +
+        '<td><span class="rank-pill tier-' + m.tier + '">' + escapeHtml(m.rank) + "</span></td>" +
+        '<td class="joined">' + joined + "</td>" +
+        '<td class="wvw">' + (m.wvw_member ? "✓" : "—") + "</td>";
+      rosterBody.appendChild(tr);
+    });
+  }
+
+  memberFilter.addEventListener("input", () => {
+    const q = memberFilter.value.trim().toLowerCase();
+    renderRoster(currentMembers.filter((m) => m.name.toLowerCase().includes(q)));
+  });
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  // --- Étape 4 : activité commune ---
+
+  async function apiGetKey(path, key) {
+    const url = API + path + (path.includes("?") ? "&" : "?") + "access_token=" + encodeURIComponent(key);
+    const res = await fetch(url);
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).text || ""; } catch (e) {}
+      const err = new Error(detail || ("HTTP " + res.status));
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  }
+
+  async function apiGetPublic(path) {
+    const res = await fetch(API + path);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }
+
+  const participantList = $("participant-list");
+  let participantSeq = 0;
+
+  function addParticipantRow(name) {
+    participantSeq++;
+    const row = document.createElement("div");
+    row.className = "participant-row";
+    row.dataset.id = "p" + participantSeq;
+    row.innerHTML =
+      '<input type="text" class="p-name" placeholder="Nom (optionnel)" value="' + escapeHtml(name || "") + '" autocomplete="off">' +
+      '<input type="password" class="p-key" placeholder="Clé API (account + progression)" autocomplete="off">' +
+      '<span class="p-status"></span>' +
+      '<button type="button" class="ghost remove-row" title="Retirer">&times;</button>';
+    row.querySelector(".remove-row").addEventListener("click", () => row.remove());
+    participantList.appendChild(row);
+  }
+
+  addParticipantRow("");
+  addParticipantRow("");
+
+  $("add-participant").addEventListener("click", () => addParticipantRow(""));
+
+  $("prefill-roster").addEventListener("click", () => {
+    if (!currentMembers || currentMembers.length === 0) {
+      setMsg($("group-msg"), "Charge d'abord le registre d'une guilde à l'étape 3.", "error");
+      return;
+    }
+    participantList.innerHTML = "";
+    currentMembers.forEach((m) => addParticipantRow(m.name));
+    setMsg($("group-msg"), "");
+  });
+
+  $("analyze-group").addEventListener("click", async () => {
+    const groupMsg = $("group-msg");
+    const resultsEl = $("group-results");
+    setMsg(groupMsg, "");
+    resultsEl.innerHTML = "";
+
+    const rows = Array.from(participantList.querySelectorAll(".participant-row"));
+    const entries = rows
+      .map((row) => ({
+        name: row.querySelector(".p-name").value.trim(),
+        key: row.querySelector(".p-key").value.trim(),
+        status: row.querySelector(".p-status"),
+      }))
+      .filter((e) => e.key);
+
+    if (entries.length < 2) {
+      setMsg(groupMsg, "Ajoute au moins 2 participants avec leur clé API.", "error");
+      return;
+    }
+
+    const analyzeBtn = $("analyze-group");
+    analyzeBtn.disabled = true;
+    analyzeBtn.innerHTML = '<span class="spinner"></span>Analyse en cours…';
+    entries.forEach((e) => { e.status.textContent = "…"; });
+
+    const results = await Promise.all(
+      entries.map(async (e) => {
+        try {
+          const [account, achievements] = await Promise.all([
+            apiGetKey("/account", e.key),
+            apiGetKey("/account/achievements", e.key),
+          ]);
+          e.status.textContent = "✓";
+          e.status.title = "";
+          return { ok: true, name: e.name || account.name, achievements };
+        } catch (err) {
+          e.status.textContent = "✗";
+          e.status.title = err.message;
+          return { ok: false, name: e.name || "(clé invalide)", error: err.message };
+        }
+      })
+    );
+
+    const valid = results.filter((r) => r.ok);
+    const failed = results.filter((r) => !r.ok);
+
+    if (valid.length < 2) {
+      setMsg(
+        groupMsg,
+        "Il faut au moins 2 clés valides pour comparer." + (failed.length ? " " + failed.map((f) => f.name + " : " + f.error).join(" — ") : ""),
+        "error"
+      );
+      analyzeBtn.disabled = false;
+      analyzeBtn.textContent = "Analyser le groupe";
+      return;
+    }
+
+    const maps = valid.map((r) => {
+      const m = new Map();
+      r.achievements.forEach((a) => m.set(a.id, a));
+      return m;
+    });
+
+    const universe = new Set();
+    maps.forEach((m) => m.forEach((_, id) => universe.add(id)));
+
+    const commonIncomplete = [];
+    universe.forEach((id) => {
+      const noneCompleted = maps.every((m) => {
+        const a = m.get(id);
+        return !a || a.done !== true;
+      });
+      if (noneCompleted) commonIncomplete.push(id);
+    });
+
+    if (commonIncomplete.length === 0) {
+      setMsg(groupMsg, "Aucun haut-fait commun trouvé — le groupe a déjà fini tout ce qu'au moins l'un d'entre vous a entamé.", "info");
+      analyzeBtn.disabled = false;
+      analyzeBtn.textContent = "Analyser le groupe";
+      return;
+    }
+
+    let details = [];
+    try {
+      for (let i = 0; i < commonIncomplete.length; i += 200) {
+        const chunk = commonIncomplete.slice(i, i + 200);
+        const data = await apiGetPublic("/achievements?ids=" + chunk.join(","));
+        details = details.concat(data);
+      }
+    } catch (err) {
+      setMsg(groupMsg, "Erreur en résolvant les hauts-faits : " + err.message, "error");
+      analyzeBtn.disabled = false;
+      analyzeBtn.textContent = "Analyser le groupe";
+      return;
+    }
+
+    const enriched = details
+      .filter((a) => !(a.flags || []).includes("Hidden"))
+      .map((a) => {
+        const points = (a.tiers || []).reduce((s, t) => s + (t.points || 0), 0);
+        const started = maps.filter((m) => {
+          const entry = m.get(a.id);
+          return entry && ((entry.current && entry.current > 0) || (entry.bits && entry.bits.length > 0));
+        }).length;
+        const description = (a.description || "").replace(/<\/?c(=@?\w+)?>/g, "");
+        return { id: a.id, name: a.name, description, points, started };
+      })
+      .filter((a) => a.name)
+      .sort((a, b) => b.points - a.points)
+      .slice(0, 25);
+
+    renderGroupResults(enriched, valid.length, failed);
+
+    analyzeBtn.disabled = false;
+    analyzeBtn.textContent = "Analyser le groupe";
+  });
+
+  function renderGroupResults(list, participantCount, failed) {
+    const resultsEl = $("group-results");
+    const groupMsg = $("group-msg");
+    if (failed.length) {
+      setMsg(groupMsg, failed.length + " clé(s) ignorée(s) : " + failed.map((f) => f.name + " (" + f.error + ")").join(", "), "error");
+    } else {
+      setMsg(groupMsg, "");
+    }
+
+    if (list.length === 0) {
+      resultsEl.innerHTML = '<div class="msg info" style="display:block;">Rien d\'assez notable à proposer une fois filtré.</div>';
+      return;
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = "achv-list";
+    list.forEach((a, i) => {
+      const card = document.createElement("div");
+      card.className = "achv-card";
+      card.innerHTML =
+        '<div class="achv-top">' +
+          '<span class="achv-name"><span class="achv-rank">' + (i + 1) + '.</span>' + escapeHtml(a.name) + "</span>" +
+          '<span class="achv-points">' + a.points + " pts</span>" +
+        "</div>" +
+        (a.description ? '<div class="achv-desc">' + escapeHtml(a.description) + "</div>" : "") +
+        '<div class="achv-progress">' + a.started + " / " + participantCount + " ont déjà entamé ce haut-fait</div>";
+      wrap.appendChild(card);
+    });
+    resultsEl.innerHTML = "";
+    resultsEl.appendChild(wrap);
+  }
+</script>
+</body>
+</html>

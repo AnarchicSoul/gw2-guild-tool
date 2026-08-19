@@ -1,0 +1,16 @@
+name = "gw2-guild-api-dev"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+account_id = "8cfbb71203c475ce15c0f1d522670443"
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gw2-guild-tool-dev"
+database_id = "8b34ecb8-4136-43f9-96e9-2424a8825062"

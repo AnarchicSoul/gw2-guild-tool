@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GW2 Guild Tool</title>
+<style>
+  :root {
+    --parchment: #f3ecd9;
+    --surface: #fbf7ec;
+    --surface-2: #efe6cc;
+    --line: #ddd0ac;
+    --ink: #241f17;
+    --ink-dim: #6b6047;
+    --gold: #96701e;
+    --gold-strong: #7a5a17;
+    --danger: #8a2f1f;
+    --danger-bg: #f6e4de;
+    --ok: #3f5a3f;
+    --ok-bg: #e6efe1;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --parchment: #14110d;
+      --surface: #1c1811;
+      --surface-2: #262015;
+      --line: #3c331f;
+      --ink: #ece4d0;
+      --ink-dim: #a89a78;
+      --gold: #e0b354;
+      --gold-strong: #f0c874;
+      --danger: #e0897a;
+      --danger-bg: #3a2119;
+      --ok: #9db98a;
+      --ok-bg: #223420;
+    }
+  }
+  :root[data-theme="dark"] {
+    --parchment: #14110d;
+    --surface: #1c1811;
+    --surface-2: #262015;
+    --line: #3c331f;
+    --ink: #ece4d0;
+    --ink-dim: #a89a78;
+    --gold: #e0b354;
+    --gold-strong: #f0c874;
+    --danger: #e0897a;
+    --danger-bg: #3a2119;
+    --ok: #9db98a;
+    --ok-bg: #223420;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 2.5rem 1.5rem 5rem;
+    background: var(--parchment);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+  }
+
+  main { width: 100%; max-width: 640px; }
+
+  header {
+    margin-bottom: 2rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 2px solid var(--gold);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  h1 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    font-size: 1.9rem;
+    font-weight: 600;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .account-badge {
+    font-size: 0.85rem;
+    color: var(--ink-dim);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  section {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+
+  section h2 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.9rem;
+  }
+
+  label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--ink-dim);
+    margin-bottom: 0.4rem;
+  }
+
+  input[type="email"], input[type="password"], input[type="text"] {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--surface-2);
+    color: var(--ink);
+    font-size: 0.92rem;
+  }
+  input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+
+  .field { margin-bottom: 0.85rem; }
+
+  button {
+    padding: 0.6rem 1.1rem;
+    border: 1px solid var(--gold-strong);
+    border-radius: 3px;
+    background: var(--gold);
+    color: var(--surface);
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: var(--gold-strong); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--gold); border-color: var(--line); }
+  button.ghost:hover { background: var(--surface-2); }
+  button.danger { background: transparent; color: var(--danger); border-color: var(--line); padding: 0.3rem 0.6rem; font-size: 0.78rem; }
+  button.danger:hover { background: var(--danger-bg); }
+
+  .row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+
+  .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.1rem; }
+  .tabs button { flex: 1; background: transparent; color: var(--ink-dim); border-color: var(--line); }
+  .tabs button.active { background: var(--gold); color: var(--surface); border-color: var(--gold-strong); }
+
+  .msg {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+    display: none;
+  }
+  .msg.error { display: block; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger); }
+  .msg.info { display: block; background: var(--surface-2); color: var(--ink-dim); border: 1px solid var(--line); }
+  .msg.ok { display: block; background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok); }
+
+  .link-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+  .link-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--surface-2);
+    font-size: 0.9rem;
+  }
+  .link-item .guilds { font-size: 0.75rem; color: var(--ink-dim); }
+
+  .match-group { margin-bottom: 1rem; }
+  .match-group h3 {
+    font-size: 0.85rem;
+    color: var(--gold);
+    margin: 0 0 0.4rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .match-group ul { margin: 0; padding-left: 1.1rem; font-size: 0.9rem; }
+
+  .hidden { display: none; }
+
+  .spinner {
+    display: inline-block;
+    width: 0.9em; height: 0.9em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: -0.15em;
+    margin-right: 0.4em;
+  }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>GW2 Guild Tool</h1>
+    <div class="account-badge hidden" id="account-badge">
+      <span id="account-email"></span>
+      <button type="button" class="ghost" id="logout-btn">Déconnexion</button>
+    </div>
+  </header>
+
+  <section id="auth-section">
+    <div class="tabs">
+      <button type="button" class="active" id="tab-login">Connexion</button>
+      <button type="button" id="tab-register">Créer un compte</button>
+    </div>
+
+    <form id="login-form">
+      <div class="field">
+        <label for="login-email">Email</label>
+        <input type="email" id="login-email" required autocomplete="username">
+      </div>
+      <div class="field">
+        <label for="login-password">Mot de passe</label>
+        <input type="password" id="login-password" required autocomplete="current-password">
+      </div>
+      <button type="submit" id="login-submit">Se connecter</button>
+      <div class="msg" id="login-msg"></div>
+    </form>
+
+    <form id="register-form" class="hidden">
+      <div class="field">
+        <label for="register-email">Email</label>
+        <input type="email" id="register-email" required autocomplete="username">
+      </div>
+      <div class="field">
+        <label for="register-password">Mot de passe (10 caractères minimum)</label>
+        <input type="password" id="register-password" required minlength="10" autocomplete="new-password">
+      </div>
+      <button type="submit" id="register-submit">Créer mon compte</button>
+      <div class="msg" id="register-msg"></div>
+    </form>
+  </section>
+
+  <section id="links-section" class="hidden">
+    <h2>Comptes Guild Wars 2 liés</h2>
+    <div class="link-list" id="link-list"></div>
+
+    <form id="link-form" class="row">
+      <input type="text" id="link-key" placeholder="Clé API GW2 (scope account minimum)" autocomplete="off" style="flex:1; min-width:220px;">
+      <button type="submit" id="link-submit">Lier</button>
+    </form>
+    <div class="msg" id="link-msg"></div>
+  </section>
+
+  <section id="matches-section" class="hidden">
+    <h2>Membres de guilde inscrits sur l'outil</h2>
+    <p style="font-size:0.85rem; color:var(--ink-dim); margin-top:0;">
+      Dès qu'un autre membre de tes guildes crée un compte ici et lie sa clé API, il apparaît ci-dessous.
+    </p>
+    <button type="button" class="ghost" id="refresh-matches">Rafraîchir</button>
+    <div id="matches-result" style="margin-top:1rem;"></div>
+  </section>
+</main>
+
+<script>
+  const API = "https://gw2-guild-api-dev.duval-johan-91.workers.dev";
+  const TOKEN_KEY = "gw2_guild_tool_token";
+  const $ = (id) => document.getElementById(id);
+
+  function getToken() { return localStorage.getItem(TOKEN_KEY); }
+  function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+  function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
+  function setMsg(el, text, type) {
+    el.className = "msg" + (type ? " " + type : "");
+    el.textContent = text || "";
+    if (!text) el.className = "msg";
+  }
+
+  async function api(path, options = {}) {
+    const token = getToken();
+    const res = await fetch(API + path, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: "Bearer " + token } : {}),
+      },
+      ...options,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.error || "Erreur réseau.");
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  }
+
+  // --- Tabs ---
+  $("tab-login").addEventListener("click", () => switchTab("login"));
+  $("tab-register").addEventListener("click", () => switchTab("register"));
+
+  function switchTab(which) {
+    $("tab-login").classList.toggle("active", which === "login");
+    $("tab-register").classList.toggle("active", which === "register");
+    $("login-form").classList.toggle("hidden", which !== "login");
+    $("register-form").classList.toggle("hidden", which !== "register");
+  }
+
+  // --- Auth ---
+  $("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("login-submit");
+    setMsg($("login-msg"), "");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Connexion…';
+    try {
+      const data = await api("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: $("login-email").value.trim(), password: $("login-password").value }),
+      });
+      setToken(data.token);
+      await loadDashboard();
+    } catch (err) {
+      setMsg($("login-msg"), err.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Se connecter";
+    }
+  });
+
+  $("register-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("register-submit");
+    setMsg($("register-msg"), "");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Création…';
+    try {
+      const data = await api("/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ email: $("register-email").value.trim(), password: $("register-password").value }),
+      });
+      setToken(data.token);
+      await loadDashboard();
+    } catch (err) {
+      setMsg($("register-msg"), err.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Créer mon compte";
+    }
+  });
+
+  $("logout-btn").addEventListener("click", async () => {
+    await api("/auth/logout", { method: "POST" }).catch(() => {});
+    clearToken();
+    showLoggedOut();
+  });
+
+  // --- GW2 link ---
+  $("link-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("link-submit");
+    const keyInput = $("link-key");
+    setMsg($("link-msg"), "");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Vérification…';
+    const apiKey = keyInput.value.trim();
+    try {
+      // Appelé depuis le navigateur (donc ta propre IP) plutôt que depuis le
+      // Worker : évite les 429 causés par les IP de sortie mutualisées de
+      // Cloudflare Workers, sans rapport avec la validité de ta clé.
+      const gw2Res = await fetch("https://api.guildwars2.com/v2/account?access_token=" + encodeURIComponent(apiKey));
+      if (!gw2Res.ok) {
+        throw new Error(gw2Res.status === 429
+          ? "L'API Guild Wars 2 te limite directement (rare) — réessaie dans une minute."
+          : "Clé API GW2 invalide ou expirée.");
+      }
+      const gw2Account = await gw2Res.json();
+
+      await api("/gw2/link", {
+        method: "POST",
+        body: JSON.stringify({
+          api_key: apiKey,
+          gw2_account: { id: gw2Account.id, name: gw2Account.name, guilds: gw2Account.guilds || [] },
+        }),
+      });
+      keyInput.value = "";
+      setMsg($("link-msg"), "Compte GW2 lié avec succès.", "ok");
+      await refreshMe();
+    } catch (err) {
+      setMsg($("link-msg"), err.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Lier";
+    }
+  });
+
+  async function unlink(id) {
+    try {
+      await api("/gw2/link", { method: "DELETE", body: JSON.stringify({ id }) });
+      await refreshMe();
+    } catch (err) {
+      setMsg($("link-msg"), err.message, "error");
+    }
+  }
+
+  function renderLinks(links) {
+    const list = $("link-list");
+    list.innerHTML = "";
+    if (links.length === 0) {
+      list.innerHTML = '<div class="msg info" style="display:block;">Aucun compte GW2 lié pour l\'instant.</div>';
+      return;
+    }
+    links.forEach((l) => {
+      const row = document.createElement("div");
+      row.className = "link-item";
+      row.innerHTML =
+        "<div><div>" + escapeHtml(l.name) + '</div><div class="guilds">' + l.guilds.length + " guilde(s)</div></div>" +
+        '<button type="button" class="danger">Délier</button>';
+      row.querySelector("button").addEventListener("click", () => unlink(l.id));
+      list.appendChild(row);
+    });
+  }
+
+  // --- Matches ---
+  $("refresh-matches").addEventListener("click", loadMatches);
+
+  async function loadMatches() {
+    const el = $("matches-result");
+    el.innerHTML = '<div class="msg info" style="display:block;"><span class="spinner"></span>Chargement…</div>';
+    try {
+      const data = await api("/guild/matches");
+      const guildIds = Object.keys(data.matches);
+      if (guildIds.length === 0) {
+        el.innerHTML = '<div class="msg info" style="display:block;">Personne d\'autre trouvé pour l\'instant dans tes guildes.</div>';
+        return;
+      }
+      el.innerHTML = "";
+      guildIds.forEach((gid) => {
+        const group = document.createElement("div");
+        group.className = "match-group";
+        const members = data.matches[gid].map((m) => "<li>" + escapeHtml(m.name) + "</li>").join("");
+        group.innerHTML = "<h3>Guilde " + gid.slice(0, 8) + "…</h3><ul>" + members + "</ul>";
+        el.appendChild(group);
+      });
+    } catch (err) {
+      el.innerHTML = '<div class="msg error" style="display:block;">' + escapeHtml(err.message) + "</div>";
+    }
+  }
+
+  // --- Session bootstrap ---
+  async function refreshMe() {
+    const me = await api("/me");
+    $("account-email").textContent = me.email;
+    $("account-badge").classList.remove("hidden");
+    renderLinks(me.gw2_links);
+    return me;
+  }
+
+  async function loadDashboard() {
+    await refreshMe();
+    $("auth-section").classList.add("hidden");
+    $("links-section").classList.remove("hidden");
+    $("matches-section").classList.remove("hidden");
+    loadMatches();
+  }
+
+  function showLoggedOut() {
+    $("account-badge").classList.add("hidden");
+    $("auth-section").classList.remove("hidden");
+    $("links-section").classList.add("hidden");
+    $("matches-section").classList.add("hidden");
+    $("login-form").reset();
+    $("register-form").reset();
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  (async () => {
+    if (!getToken()) {
+      showLoggedOut();
+      return;
+    }
+    try {
+      await loadDashboard();
+    } catch (e) {
+      clearToken(); // token périmé/invalide : pas la peine de le garder
+      showLoggedOut();
+    }
+  })();
+</script>
+</body>
+</html>

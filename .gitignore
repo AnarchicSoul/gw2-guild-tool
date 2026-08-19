@@ -1,0 +1,14 @@
+# Secrets / config locale — ne doit jamais être commité
+*.tfvars
+.env
+.env.*
+*.pem
+*.key
+
+# Cloudflare / wrangler
+.wrangler/
+api/node_modules/
+
+# Système
+.DS_Store
+Thumbs.db
