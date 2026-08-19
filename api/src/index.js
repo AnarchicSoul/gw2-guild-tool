@@ -5,6 +5,10 @@
 // Un token en localStorage + header Authorization évite complètement ce
 // problème. On reflète l'origine de la requête tant que la GUI n'a pas
 // d'origine fixe — à verrouiller sur l'origine GitHub Pages définitive plus tard.
+// Ceci dit, comme il n'y a plus de cookie, un site tiers ne peut de toute
+// façon pas lire le token dans le localStorage d'un autre domaine : le
+// scénario CSRF classique que ce verrouillage évite habituellement ne
+// s'applique plus vraiment ici.
 function corsHeaders(request) {
   return {
     "Access-Control-Allow-Origin": request.headers.get("Origin") || "*",
@@ -72,6 +76,12 @@ async function handleRegister(request, env) {
   if (!isValidEmail(email)) return json({ error: "Email invalide." }, 400);
   if (password.length < 10) return json({ error: "Le mot de passe doit faire au moins 10 caractères." }, 400);
 
+  // Anti-spam de création de comptes, par IP (pas par email : un attaquant
+  // choisirait de toute façon un email différent à chaque tentative).
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const cooldownError = await checkCooldown(env, "register:" + ip, 5000);
+  if (cooldownError) return cooldownError;
+
   const existing = await env.DB.prepare("SELECT id FROM accounts WHERE email = ?").bind(email).first();
   if (existing) return json({ error: "Un compte existe déjà avec cet email." }, 409);
 
@@ -91,6 +101,11 @@ async function handleLogin(request, env) {
 
   const genericError = () => json({ error: "Email ou mot de passe incorrect." }, 401);
   if (!isValidEmail(email) || !password) return genericError();
+
+  // Anti brute-force : cooldown par email ciblé (empêche de tester des
+  // mots de passe en rafale contre un compte précis).
+  const cooldownError = await checkCooldown(env, "login:" + email, 2000);
+  if (cooldownError) return cooldownError;
 
   const account = await env.DB.prepare(
     "SELECT id, email, password_hash, password_salt FROM accounts WHERE email = ?"
