@@ -21,3 +21,9 @@ database_id = "8b34ecb8-4136-43f9-96e9-2424a8825062"
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "gw2_guild_tool_events"
+
+# Autorise /admin/bootstrap tant qu'aucun admin n'existe encore (auto-promotion
+# du compte connecté qui appelle l'endpoint). À repasser à "false" une fois le
+# premier admin en place — voir README pour la procédure complète.
+[vars]
+SUPER_ADMIN_MODE = "false"

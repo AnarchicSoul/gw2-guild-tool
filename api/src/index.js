@@ -59,6 +59,12 @@ export default {
         response = await handleUnlinkGw2(request, env);
       } else if (url.pathname === "/guild/matches" && request.method === "GET") {
         response = await handleGuildMatches(request, env);
+      } else if (url.pathname === "/admin/bootstrap" && request.method === "POST") {
+        response = await handleAdminBootstrap(request, env);
+      } else if (url.pathname === "/admin/promote" && request.method === "POST") {
+        response = await handleAdminPromote(request, env);
+      } else if (url.pathname === "/admin/users" && request.method === "GET") {
+        response = await handleAdminListUsers(request, env);
       } else {
         response = json({ error: "Route introuvable." }, 404);
       }
@@ -158,6 +164,7 @@ async function handleMe(request, env) {
   return json({
     id: account.id,
     email: account.email,
+    role: account.role,
     gw2_links: links.results.map((r) => ({
       id: r.id,
       name: r.gw2_account_name,
@@ -275,6 +282,55 @@ async function handleGuildMatches(request, env) {
   return json({ matches: byGuild });
 }
 
+// --- Administration ---
+
+// Amorce le tout premier admin : ne fonctionne que si SUPER_ADMIN_MODE=true
+// ET qu'aucun admin n'existe encore (double verrou — même en oubliant de
+// repasser le flag à false, l'endpoint devient un no-op après coup).
+async function handleAdminBootstrap(request, env) {
+  const account = await requireSession(request, env);
+  if (account instanceof Response) return account;
+
+  if (env.SUPER_ADMIN_MODE !== "true") {
+    return json({ error: "Mode bootstrap désactivé." }, 403);
+  }
+
+  const existingAdmin = await env.DB.prepare("SELECT id FROM accounts WHERE role = 'admin' LIMIT 1").first();
+  if (existingAdmin) {
+    return json({ error: "Un admin existe déjà — utilise la promotion normale." }, 403);
+  }
+
+  await env.DB.prepare("UPDATE accounts SET role = 'admin' WHERE id = ?").bind(account.id).run();
+  trackEvent(env, "admin_bootstrap", "success");
+  return json({ ok: true, role: "admin" });
+}
+
+// Un admin peut en promouvoir un autre — indépendant du mode bootstrap.
+async function handleAdminPromote(request, env) {
+  const admin = await requireAdmin(request, env);
+  if (admin instanceof Response) return admin;
+
+  const body = await request.json().catch(() => ({}));
+  const email = (body.email || "").trim().toLowerCase();
+  if (!isValidEmail(email)) return json({ error: "Email invalide." }, 400);
+
+  const target = await env.DB.prepare("SELECT id, role FROM accounts WHERE email = ?").bind(email).first();
+  if (!target) return json({ error: "Aucun compte avec cet email." }, 404);
+  if (target.role === "admin") return json({ error: "Déjà admin." }, 409);
+
+  await env.DB.prepare("UPDATE accounts SET role = 'admin' WHERE id = ?").bind(target.id).run();
+  trackEvent(env, "admin_promote", "success");
+  return json({ ok: true, email });
+}
+
+async function handleAdminListUsers(request, env) {
+  const admin = await requireAdmin(request, env);
+  if (admin instanceof Response) return admin;
+
+  const users = await env.DB.prepare("SELECT id, email, role, created_at FROM accounts ORDER BY created_at").all();
+  return json({ users: users.results });
+}
+
 // --- Sessions ---
 
 async function startSession(env, accountId, email) {
@@ -296,13 +352,20 @@ async function requireSession(request, env) {
   if (!token) return json({ error: "Non authentifié." }, 401);
 
   const row = await env.DB.prepare(
-    "SELECT accounts.id, accounts.email FROM sessions " +
+    "SELECT accounts.id, accounts.email, accounts.role FROM sessions " +
     "JOIN accounts ON accounts.id = sessions.account_id " +
     "WHERE sessions.token = ? AND sessions.expires_at > datetime('now')"
   ).bind(token).first();
 
   if (!row) return json({ error: "Session expirée ou invalide." }, 401);
   return row;
+}
+
+async function requireAdmin(request, env) {
+  const account = await requireSession(request, env);
+  if (account instanceof Response) return account;
+  if (account.role !== "admin") return json({ error: "Accès réservé aux administrateurs." }, 403);
+  return account;
 }
 
 async function checkCooldown(env, key, cooldownMs) {

@@ -1,9 +1,14 @@
 -- Comptes humains (email + mot de passe)
+-- role : 'user' ou 'admin'. Nouveau compte D1 depuis zéro seulement — sur la
+-- base existante, la colonne a été ajoutée une fois via un ALTER TABLE à part
+-- (SQLite n'a pas d'ADD COLUMN IF NOT EXISTS, donc pas rejouable ici sans
+-- casser l'application idempotente de ce fichier à chaque déploiement).
 CREATE TABLE IF NOT EXISTS accounts (
   id            TEXT PRIMARY KEY,
   email         TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   password_salt TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'user',
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
