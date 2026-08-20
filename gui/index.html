@@ -356,9 +356,30 @@
   .guild-block .guild-body { padding: 0 0.75rem 0.75rem; }
   .guild-block .guild-body h4 { font-size: 0.75rem; color: var(--ink-dim); margin: 0.6rem 0 0.3rem; text-transform: uppercase; letter-spacing: 0.04em; }
   .guild-block ul { margin: 0; padding-left: 1.1rem; font-size: 0.9rem; }
-  .guild-block .roster-item.registered { color: var(--ok); }
-  .guild-block .roster-item.registered::after { content: " — inscrit·e"; font-size: 0.75rem; }
-  .guild-block .roster-item.self::after { content: " (toi)"; font-size: 0.75rem; color: var(--ink-dim); }
+
+  .member-list { list-style: none; padding-left: 0; }
+  .member-list .member-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .member-list .member-row:last-child { border-bottom: none; }
+  .member-list .member-name { font-weight: 600; }
+  .member-list .member-meta { font-size: 0.75rem; color: var(--ink-dim); margin-left: 0.5rem; }
+  .member-list .badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .member-list .badge.registered { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); }
+  .member-list .badge.self { color: var(--gold); border-color: var(--gold-strong); }
 
   .hidden { display: none; }
 
@@ -532,7 +553,7 @@
   <section id="matches-section" class="hidden">
     <h2>Tes guildes</h2>
     <p style="font-size:0.85rem; color:var(--ink-dim); margin-top:0;">
-      Un bloc par guilde liée à ton compte GW2. Les membres déjà inscrits sur l'outil sont listés directement ; le roster complet est accessible en dessous si ta clé le permet.
+      Un bloc par guilde liée à ton compte GW2. Les membres déjà inscrits sur l'outil sont listés directement ; la liste complète des membres de la guilde est accessible en dessous si ta clé le permet.
     </p>
     <button type="button" class="ghost" id="refresh-matches">Rafraîchir</button>
     <div id="matches-result" style="margin-top:1rem;"></div>
@@ -825,8 +846,17 @@
     }
   }
 
+  function formatJoinedDate(iso) {
+    if (!iso) return "";
+    try {
+      return new Date(iso).toLocaleDateString("fr-FR", { year: "numeric", month: "short", day: "numeric" });
+    } catch {
+      return "";
+    }
+  }
+
   async function loadRoster(gid, registeredNames, bodyEl) {
-    bodyEl.innerHTML = '<div class="msg info" style="display:block;"><span class="spinner"></span>Chargement du roster…</div>';
+    bodyEl.innerHTML = '<div class="msg info" style="display:block;"><span class="spinner"></span>Chargement des membres…</div>';
     try {
       const keyInfo = await getKeyForGuild(gid);
       if (!keyInfo) throw new Error("Aucune clé liée ne couvre cette guilde.");
@@ -835,13 +865,15 @@
         "https://api.guildwars2.com/v2/guild/" + gid + "/members?access_token=" + encodeURIComponent(keyInfo.apiKey)
       );
       if (res.status === 403) {
-        throw new Error("Ton rang en jeu n'a pas la permission \"Voir le roster\" pour cette guilde (à accorder par un officier/leader) — impossible d'obtenir la liste complète, même avec une clé API valide.");
+        throw new Error("Ton rang en jeu n'a pas la permission \"Roster\" pour cette guilde (à accorder par un officier/leader dans le panneau de guilde) — impossible d'obtenir la liste complète, même avec une clé API valide.");
       }
       if (res.status === 401) {
-        throw new Error("La clé liée n'a pas le scope \"guilds\" — relie ta clé avec ce scope en plus pour voir le roster complet.");
+        throw new Error("La clé liée n'a pas le scope \"guilds\" — relie ta clé avec ce scope en plus pour voir les membres de la guilde.");
       }
       if (!res.ok) throw new Error("Erreur API Guild Wars 2 (" + res.status + ").");
 
+      // Seuls name/rank/joined sont exposés par GW2 pour les membres d'une
+      // guilde — pas de personnages, stats ou autre info personnelle.
       const members = await res.json(); // [{ name, rank, joined }]
       const registeredLower = new Set(registeredNames.map((n) => n.toLowerCase()));
       const items = members
@@ -849,11 +881,22 @@
         .map((m) => {
           const isSelf = m.name === keyInfo.myName;
           const isRegistered = registeredLower.has(m.name.toLowerCase());
-          const cls = isSelf ? "self" : isRegistered ? "registered" : "";
-          return '<li class="roster-item ' + cls + '">' + escapeHtml(m.name) + "</li>";
+          const badge = isSelf
+            ? '<span class="badge self">Toi</span>'
+            : isRegistered
+            ? '<span class="badge registered">Inscrit·e sur l\'outil</span>'
+            : "";
+          const joined = formatJoinedDate(m.joined);
+          return (
+            '<li class="member-row">' +
+            '<span><span class="member-name">' + escapeHtml(m.name) + "</span>" +
+            '<span class="member-meta">' + escapeHtml(m.rank || "") + (joined ? " · depuis " + joined : "") + "</span></span>" +
+            badge +
+            "</li>"
+          );
         })
         .join("");
-      bodyEl.innerHTML = "<h4>Roster complet (" + members.length + ")</h4><ul>" + items + "</ul>";
+      bodyEl.innerHTML = "<h4>Membres de la guilde (" + members.length + ")</h4><ul class=\"member-list\">" + items + "</ul>";
     } catch (err) {
       bodyEl.innerHTML = '<div class="msg error" style="display:block;">' + escapeHtml(err.message) + "</div>";
     }
@@ -884,7 +927,7 @@
           "<summary>" + label + '<span class="member-count">' + registeredMembers.length + " inscrit(s)</span></summary>" +
           '<div class="guild-body">' +
           "<h4>Déjà inscrits sur l'outil</h4><ul>" + registeredList + "</ul>" +
-          '<button type="button" class="ghost roster-btn" style="margin-top:0.5rem;">Voir le roster complet</button>' +
+          '<button type="button" class="ghost roster-btn" style="margin-top:0.5rem;">Voir tous les membres de la guilde</button>' +
           '<div class="roster-result"></div>' +
           "</div>";
         block.querySelector(".roster-btn").addEventListener("click", (e) => {
