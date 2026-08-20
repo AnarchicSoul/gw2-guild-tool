@@ -449,6 +449,9 @@
   </section>
 
   <section id="auth-section">
+    <button type="button" class="ghost" id="google-auth-btn" style="width:100%; margin-bottom:1rem;">Continuer avec Google</button>
+    <div class="msg" id="google-auth-msg"></div>
+
     <div class="tabs">
       <button type="button" class="active" id="tab-login">Connexion</button>
       <button type="button" id="tab-register">Créer un compte</button>
@@ -589,6 +592,22 @@
   // --- Auth ---
   let pendingMfaChallenge = null;
   let currentMfaEnabled = false;
+  let pendingGoogleLinkCode = null;
+
+  async function completeGoogleLinkIfPending() {
+    if (!pendingGoogleLinkCode) return;
+    const code = pendingGoogleLinkCode;
+    pendingGoogleLinkCode = null;
+    try {
+      await api("/account/google/link", { method: "POST", body: JSON.stringify({ link_code: code }) });
+    } catch (err) {
+      setMsg($("google-auth-msg"), "Connexion réussie, mais la liaison Google a échoué : " + err.message, "error");
+    }
+  }
+
+  $("google-auth-btn").addEventListener("click", () => {
+    window.location.href = API + "/auth/google/start";
+  });
 
   $("login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -609,6 +628,7 @@
         return;
       }
       setToken(data.token);
+      await completeGoogleLinkIfPending();
       await loadDashboard();
     } catch (err) {
       setMsg($("login-msg"), err.message, "error");
@@ -633,6 +653,7 @@
       $("mfa-login-form").classList.add("hidden");
       $("mfa-login-form").reset();
       $("login-form").classList.remove("hidden");
+      await completeGoogleLinkIfPending();
       await loadDashboard();
     } catch (err) {
       setMsg($("mfa-login-msg"), err.message, "error");
@@ -1050,8 +1071,42 @@
     }
   });
 
+  // Retour de /auth/google/callback : ?oauth_code=... (à échanger contre une
+  // session ou une demande de liaison) ou ?oauth_error=.... Nettoie l'URL
+  // immédiatement dans tous les cas — un code ne doit pas traîner dans
+  // l'historique du navigateur plus longtemps que nécessaire.
+  async function handleOAuthReturn() {
+    const params = new URLSearchParams(window.location.search);
+    const oauthCode = params.get("oauth_code");
+    const oauthError = params.get("oauth_error");
+    if (!oauthCode && !oauthError) return false;
+    window.history.replaceState({}, "", window.location.pathname);
+
+    if (oauthError) {
+      setMsg($("google-auth-msg"), "Connexion Google échouée (" + oauthError + ").", "error");
+      return false;
+    }
+
+    try {
+      const data = await api("/auth/google/exchange", { method: "POST", body: JSON.stringify({ code: oauthCode }) });
+      if (data.link_required) {
+        pendingGoogleLinkCode = data.link_code;
+        $("login-email").value = data.email;
+        switchTab("login");
+        setMsg($("google-auth-msg"), "Un compte existe déjà avec " + data.email + " — connecte-toi avec ton mot de passe pour lier ton compte Google.", "info");
+        return false;
+      }
+      setToken(data.token);
+      return true;
+    } catch (err) {
+      setMsg($("google-auth-msg"), err.message, "error");
+      return false;
+    }
+  }
+
   (async () => {
-    if (!getToken()) {
+    const loggedInViaOAuth = await handleOAuthReturn();
+    if (!loggedInViaOAuth && !getToken()) {
       showLoggedOut();
       return;
     }
