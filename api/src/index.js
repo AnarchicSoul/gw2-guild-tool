@@ -581,6 +581,7 @@ async function handleUnlinkGw2(request, env) {
   if (!link || link.account_id !== account.id) return json({ error: "Introuvable." }, 404);
 
   await env.DB.prepare("DELETE FROM user_guilds WHERE gw2_link_id = ?").bind(linkId).run();
+  await env.DB.prepare("DELETE FROM gw2_progress WHERE gw2_link_id = ?").bind(linkId).run();
   await env.DB.prepare("DELETE FROM gw2_links WHERE id = ?").bind(linkId).run();
   return json({ ok: true });
 }
@@ -894,6 +895,7 @@ async function handleAdminDeleteUser(request, env) {
   const links = await env.DB.prepare("SELECT id FROM gw2_links WHERE account_id = ?").bind(targetId).all();
   for (const link of links.results) {
     await env.DB.prepare("DELETE FROM user_guilds WHERE gw2_link_id = ?").bind(link.id).run();
+    await env.DB.prepare("DELETE FROM gw2_progress WHERE gw2_link_id = ?").bind(link.id).run();
   }
   await env.DB.prepare("DELETE FROM gw2_links WHERE account_id = ?").bind(targetId).run();
   await env.DB.prepare("DELETE FROM sessions WHERE account_id = ?").bind(targetId).run();
