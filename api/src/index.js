@@ -79,6 +79,8 @@ export default {
         response = await handleLinkGw2(request, env);
       } else if (url.pathname === "/gw2/link" && request.method === "DELETE") {
         response = await handleUnlinkGw2(request, env);
+      } else if (url.pathname === "/gw2/reveal-key" && request.method === "POST") {
+        response = await handleRevealGw2Key(request, env);
       } else if (url.pathname === "/guild/matches" && request.method === "GET") {
         response = await handleGuildMatches(request, env);
       } else if (url.pathname === "/admin/bootstrap" && request.method === "POST") {
@@ -577,6 +579,30 @@ async function handleUnlinkGw2(request, env) {
   await env.DB.prepare("DELETE FROM user_guilds WHERE gw2_link_id = ?").bind(linkId).run();
   await env.DB.prepare("DELETE FROM gw2_links WHERE id = ?").bind(linkId).run();
   return json({ ok: true });
+}
+
+// Redéchiffre une clé API vers le navigateur du propriétaire uniquement, pour
+// qu'il puisse appeler lui-même /v2/guild/:id/members (roster complet) —
+// cet appel doit partir du navigateur, pas du Worker, pour la même raison
+// que tout le reste des appels GW2 (IP de sortie mutualisées → 429). La clé
+// ne quitte donc le stockage chiffré que vers le compte qui l'a fournie.
+async function handleRevealGw2Key(request, env) {
+  const account = await requireSession(request, env);
+  if (account instanceof Response) return account;
+
+  const body = await request.json().catch(() => ({}));
+  const linkId = body.gw2_link_id;
+  if (!linkId) return json({ error: "Identifiant manquant." }, 400);
+
+  const cooldownError = await checkCooldown(env, "revealkey:" + account.id, 2000);
+  if (cooldownError) return cooldownError;
+
+  const link = await env.DB.prepare("SELECT account_id, api_key_encrypted FROM gw2_links WHERE id = ?").bind(linkId).first();
+  if (!link || link.account_id !== account.id) return json({ error: "Introuvable." }, 404);
+
+  const apiKey = await decryptSecret(env, link.api_key_encrypted);
+  trackEvent(env, "gw2_reveal_key", "success");
+  return json({ api_key: apiKey });
 }
 
 // --- Matching de guilde ---

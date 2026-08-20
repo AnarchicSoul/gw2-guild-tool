@@ -329,15 +329,36 @@
   }
   .link-item .guilds { font-size: 0.75rem; color: var(--ink-dim); }
 
-  .match-group { margin-bottom: 1rem; }
-  .match-group h3 {
-    font-size: 0.85rem;
-    color: var(--gold);
-    margin: 0 0 0.4rem;
-    font-weight: 700;
-    letter-spacing: 0.02em;
+  .guild-block {
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--surface-2);
+    overflow: hidden;
   }
-  .match-group ul { margin: 0; padding-left: 1.1rem; font-size: 0.9rem; }
+  .guild-block summary {
+    cursor: pointer;
+    padding: 0.6rem 0.75rem;
+    font-weight: 700;
+    color: var(--gold);
+    font-size: 0.9rem;
+    letter-spacing: 0.02em;
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .guild-block summary::-webkit-details-marker { display: none; }
+  .guild-block summary::before { content: "▸"; margin-right: 0.4rem; color: var(--ink-dim); display: inline-block; transition: transform 0.15s; }
+  .guild-block[open] summary::before { transform: rotate(90deg); }
+  .guild-block summary .member-count { font-size: 0.75rem; color: var(--ink-dim); font-weight: 400; }
+  .guild-block .guild-body { padding: 0 0.75rem 0.75rem; }
+  .guild-block .guild-body h4 { font-size: 0.75rem; color: var(--ink-dim); margin: 0.6rem 0 0.3rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .guild-block ul { margin: 0; padding-left: 1.1rem; font-size: 0.9rem; }
+  .guild-block .roster-item.registered { color: var(--ok); }
+  .guild-block .roster-item.registered::after { content: " — inscrit·e"; font-size: 0.75rem; }
+  .guild-block .roster-item.self::after { content: " (toi)"; font-size: 0.75rem; color: var(--ink-dim); }
 
   .hidden { display: none; }
 
@@ -780,6 +801,64 @@
   // --- Matches ---
   $("refresh-matches").addEventListener("click", loadMatches);
 
+  // Clés déchiffrées en mémoire pour la session de page en cours seulement
+  // (jamais en localStorage) — évite de redemander le déchiffrement à chaque
+  // ouverture d'un bloc guilde pendant la même visite.
+  const revealedKeys = new Map();
+
+  async function getKeyForGuild(guildId) {
+    const link = currentGw2Links.find((l) => l.guilds.includes(guildId));
+    if (!link) return null;
+    if (revealedKeys.has(link.id)) return revealedKeys.get(link.id);
+    const data = await api("/gw2/reveal-key", { method: "POST", body: JSON.stringify({ gw2_link_id: link.id }) });
+    revealedKeys.set(link.id, { apiKey: data.api_key, myName: link.name });
+    return revealedKeys.get(link.id);
+  }
+
+  async function loadGuildInfo(gid) {
+    try {
+      const res = await fetch("https://api.guildwars2.com/v2/guild/" + gid);
+      if (!res.ok) return null;
+      return await res.json(); // { name, tag, ... }
+    } catch {
+      return null;
+    }
+  }
+
+  async function loadRoster(gid, registeredNames, bodyEl) {
+    bodyEl.innerHTML = '<div class="msg info" style="display:block;"><span class="spinner"></span>Chargement du roster…</div>';
+    try {
+      const keyInfo = await getKeyForGuild(gid);
+      if (!keyInfo) throw new Error("Aucune clé liée ne couvre cette guilde.");
+
+      const res = await fetch(
+        "https://api.guildwars2.com/v2/guild/" + gid + "/members?access_token=" + encodeURIComponent(keyInfo.apiKey)
+      );
+      if (res.status === 403) {
+        throw new Error("Ton rang en jeu n'a pas la permission \"Voir le roster\" pour cette guilde (à accorder par un officier/leader) — impossible d'obtenir la liste complète, même avec une clé API valide.");
+      }
+      if (res.status === 401) {
+        throw new Error("La clé liée n'a pas le scope \"guilds\" — relie ta clé avec ce scope en plus pour voir le roster complet.");
+      }
+      if (!res.ok) throw new Error("Erreur API Guild Wars 2 (" + res.status + ").");
+
+      const members = await res.json(); // [{ name, rank, joined }]
+      const registeredLower = new Set(registeredNames.map((n) => n.toLowerCase()));
+      const items = members
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((m) => {
+          const isSelf = m.name === keyInfo.myName;
+          const isRegistered = registeredLower.has(m.name.toLowerCase());
+          const cls = isSelf ? "self" : isRegistered ? "registered" : "";
+          return '<li class="roster-item ' + cls + '">' + escapeHtml(m.name) + "</li>";
+        })
+        .join("");
+      bodyEl.innerHTML = "<h4>Roster complet (" + members.length + ")</h4><ul>" + items + "</ul>";
+    } catch (err) {
+      bodyEl.innerHTML = '<div class="msg error" style="display:block;">' + escapeHtml(err.message) + "</div>";
+    }
+  }
+
   async function loadMatches() {
     const el = $("matches-result");
     el.innerHTML = '<div class="msg info" style="display:block;"><span class="spinner"></span>Chargement…</div>';
@@ -791,23 +870,41 @@
         return;
       }
       el.innerHTML = "";
-      guildIds.forEach((gid) => {
-        const group = document.createElement("div");
-        group.className = "match-group";
-        const members = data.matches[gid].map((m) => "<li>" + escapeHtml(m.name) + "</li>").join("");
-        group.innerHTML = "<h3>Guilde " + gid.slice(0, 8) + "…</h3><ul>" + members + "</ul>";
-        el.appendChild(group);
-      });
+      for (const gid of guildIds) {
+        const registeredMembers = data.matches[gid];
+        const info = await loadGuildInfo(gid);
+        const label = info ? "[" + escapeHtml(info.tag) + "] " + escapeHtml(info.name) : "Guilde " + gid.slice(0, 8) + "…";
+
+        const block = document.createElement("details");
+        block.className = "guild-block";
+        const registeredList = registeredMembers.map((m) => "<li>" + escapeHtml(m.name) + "</li>").join("");
+        block.innerHTML =
+          "<summary>" + label + '<span class="member-count">' + registeredMembers.length + " inscrit(s)</span></summary>" +
+          '<div class="guild-body">' +
+          "<h4>Déjà inscrits sur l'outil</h4><ul>" + registeredList + "</ul>" +
+          '<button type="button" class="ghost roster-btn" style="margin-top:0.5rem;">Voir le roster complet</button>' +
+          '<div class="roster-result"></div>' +
+          "</div>";
+        block.querySelector(".roster-btn").addEventListener("click", (e) => {
+          e.preventDefault();
+          const names = registeredMembers.map((m) => m.name);
+          loadRoster(gid, names, block.querySelector(".roster-result"));
+        });
+        el.appendChild(block);
+      }
     } catch (err) {
       el.innerHTML = '<div class="msg error" style="display:block;">' + escapeHtml(err.message) + "</div>";
     }
   }
 
   // --- Session bootstrap ---
+  let currentGw2Links = [];
+
   async function refreshMe() {
     const me = await api("/me");
     $("account-email").textContent = me.email;
     $("account-badge").classList.remove("hidden");
+    currentGw2Links = me.gw2_links;
     renderLinks(me.gw2_links);
     return me;
   }
