@@ -632,9 +632,12 @@ async function handleGuildMatches(request, env) {
      WHERE ug.guild_id IN (${guildPlaceholders}) AND gl.account_id != ?`
   ).bind(...guildIds, account.id).all();
 
+  // Toutes tes guildes apparaissent, même sans personne d'autre d'inscrit
+  // dedans pour l'instant — un bloc par guilde, pas seulement les guildes où
+  // il y a déjà un match.
   const byGuild = {};
+  guildIds.forEach((gid) => { byGuild[gid] = []; });
   others.results.forEach((row) => {
-    byGuild[row.guild_id] = byGuild[row.guild_id] || [];
     byGuild[row.guild_id].push({ gw2_link_id: row.gw2_link_id, name: row.gw2_account_name });
   });
 

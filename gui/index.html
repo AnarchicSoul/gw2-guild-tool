@@ -530,9 +530,9 @@
   </section>
 
   <section id="matches-section" class="hidden">
-    <h2>Membres de guilde inscrits sur l'outil</h2>
+    <h2>Tes guildes</h2>
     <p style="font-size:0.85rem; color:var(--ink-dim); margin-top:0;">
-      Dès qu'un autre membre de tes guildes crée un compte ici et lie sa clé API, il apparaît ci-dessous.
+      Un bloc par guilde liée à ton compte GW2. Les membres déjà inscrits sur l'outil sont listés directement ; le roster complet est accessible en dessous si ta clé le permet.
     </p>
     <button type="button" class="ghost" id="refresh-matches">Rafraîchir</button>
     <div id="matches-result" style="margin-top:1rem;"></div>
@@ -866,7 +866,7 @@
       const data = await api("/guild/matches");
       const guildIds = Object.keys(data.matches);
       if (guildIds.length === 0) {
-        el.innerHTML = '<div class="msg info" style="display:block;">Personne d\'autre trouvé pour l\'instant dans tes guildes.</div>';
+        el.innerHTML = '<div class="msg info" style="display:block;">Lie un compte GW2 membre d\'au moins une guilde pour voir des blocs ici.</div>';
         return;
       }
       el.innerHTML = "";
@@ -877,7 +877,9 @@
 
         const block = document.createElement("details");
         block.className = "guild-block";
-        const registeredList = registeredMembers.map((m) => "<li>" + escapeHtml(m.name) + "</li>").join("");
+        const registeredList = registeredMembers.length
+          ? registeredMembers.map((m) => "<li>" + escapeHtml(m.name) + "</li>").join("")
+          : '<li style="color:var(--ink-dim); list-style:none; margin-left:-1.1rem;">Personne d\'autre inscrit pour l\'instant.</li>';
         block.innerHTML =
           "<summary>" + label + '<span class="member-count">' + registeredMembers.length + " inscrit(s)</span></summary>" +
           '<div class="guild-body">' +
