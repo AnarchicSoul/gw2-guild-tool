@@ -377,6 +377,7 @@
     <div class="row" style="margin-bottom:1rem;">
       <button type="button" class="ghost" id="toggle-password-form">Changer le mot de passe</button>
       <button type="button" class="ghost" id="toggle-mfa-panel">Activer le MFA</button>
+      <button type="button" class="ghost" id="google-link-btn">Lier mon compte Google</button>
       <button type="button" class="ghost hidden admin-only" id="toggle-promote-form">Ajouter un admin</button>
       <button type="button" class="ghost hidden admin-only" id="toggle-analytics">Dashboard analytics</button>
       <button type="button" class="ghost hidden admin-only" id="toggle-user-mgmt">Gestion des utilisateurs</button>
@@ -395,11 +396,14 @@
       <div class="msg" id="password-msg"></div>
     </form>
 
+    <div class="msg" id="google-link-msg"></div>
+
     <div id="mfa-panel" class="hidden">
       <div id="mfa-setup-block" class="hidden">
         <p style="font-size:0.85rem; color:var(--ink-dim); margin-top:0;">
-          Ajoute ce secret dans ton appli d'authentification (Google Authenticator, Authy, 1Password…), puis valide avec le code généré.
+          Scanne ce QR code dans ton appli d'authentification (Google Authenticator, Authy, 1Password…), ou ajoute le secret manuellement, puis valide avec le code généré.
         </p>
+        <div id="mfa-qr" style="background:#fff; padding:0.5rem; border-radius:8px; width:fit-content; margin-bottom:0.5rem;"></div>
         <div class="msg info" id="mfa-secret-display" style="display:block; font-family:ui-monospace, 'Cascadia Mono', 'SF Mono', Consolas, monospace; word-break:break-all;"></div>
         <form id="mfa-confirm-form" class="row" style="margin-top:0.75rem;">
           <input type="text" id="mfa-confirm-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="Code à 6 chiffres" autocomplete="one-time-code">
@@ -592,6 +596,7 @@
   // --- Auth ---
   let pendingMfaChallenge = null;
   let currentMfaEnabled = false;
+  let currentGoogleLinked = false;
   let pendingGoogleLinkCode = null;
 
   async function completeGoogleLinkIfPending() {
@@ -607,6 +612,23 @@
 
   $("google-auth-btn").addEventListener("click", () => {
     window.location.href = API + "/auth/google/start";
+  });
+
+  // Lier le compte Google d'un utilisateur déjà connecté : contrairement au
+  // bouton ci-dessus (redirection directe), on passe d'abord par un appel
+  // authentifié pour que le state OAuth porte l'account_id côté serveur
+  // avant même d'aller chez Google (voir /account/google/link-start).
+  $("google-link-btn").addEventListener("click", async () => {
+    const btn = $("google-link-btn");
+    setMsg($("google-link-msg"), "");
+    btn.disabled = true;
+    try {
+      const data = await api("/account/google/link-start", { method: "POST" });
+      window.location.href = data.auth_url;
+    } catch (err) {
+      setMsg($("google-link-msg"), err.message, "error");
+      btn.disabled = false;
+    }
   });
 
   $("login-form").addEventListener("submit", async (e) => {
@@ -805,6 +827,10 @@
     currentMfaEnabled = !!me.mfa_enabled;
     $("toggle-mfa-panel").textContent = currentMfaEnabled ? "Désactiver le MFA" : "Activer le MFA";
     $("mfa-panel").classList.add("hidden");
+
+    currentGoogleLinked = !!me.google_linked;
+    $("google-link-btn").textContent = currentGoogleLinked ? "Compte Google lié ✓" : "Lier mon compte Google";
+    $("google-link-btn").disabled = currentGoogleLinked;
   }
 
   function showLoggedOut() {
@@ -879,6 +905,7 @@
     try {
       const data = await api("/account/mfa/setup", { method: "POST" });
       $("mfa-secret-display").textContent = data.secret;
+      $("mfa-qr").innerHTML = data.qr_svg || "";
     } catch (err) {
       setMsg($("mfa-msg"), err.message, "error");
     }
@@ -1079,11 +1106,24 @@
     const params = new URLSearchParams(window.location.search);
     const oauthCode = params.get("oauth_code");
     const oauthError = params.get("oauth_error");
-    if (!oauthCode && !oauthError) return false;
+    const googleLinked = params.get("google_linked");
+    if (!oauthCode && !oauthError && !googleLinked) return false;
     window.history.replaceState({}, "", window.location.pathname);
 
+    // Un aller-retour "liaison" part d'un utilisateur déjà connecté (token en
+    // localStorage, jamais touché par la redirection Google) : on distingue
+    // ce cas d'une connexion/inscription classique via getToken() pour
+    // afficher l'erreur au bon endroit (auth-section est cachée si connecté).
+    if (googleLinked) {
+      setMsg($("google-link-msg"), "Compte Google lié.", "ok");
+      return false;
+    }
+
     if (oauthError) {
-      setMsg($("google-auth-msg"), "Connexion Google échouée (" + oauthError + ").", "error");
+      const msg = oauthError === "google_already_linked"
+        ? "Ce compte Google est déjà lié à un autre compte."
+        : "Connexion Google échouée (" + oauthError + ").";
+      setMsg($(getToken() ? "google-link-msg" : "google-auth-msg"), msg, "error");
       return false;
     }
 

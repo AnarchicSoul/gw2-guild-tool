@@ -18,6 +18,8 @@ function corsHeaders(request) {
   };
 }
 
+import qrcode from "qrcode-generator";
+
 // Le runtime Workers plafonne PBKDF2 à 100 000 itérations (NotSupportedError
 // au-delà), quel que soit le plan — donc ce n'est pas un choix, c'est le max.
 const PBKDF2_ITERATIONS = 100000;
@@ -61,6 +63,8 @@ export default {
         response = await handleGoogleExchange(request, env);
       } else if (url.pathname === "/account/google/link" && request.method === "POST") {
         response = await handleGoogleLink(request, env);
+      } else if (url.pathname === "/account/google/link-start" && request.method === "POST") {
+        response = await handleGoogleLinkStart(request, env);
       } else if (url.pathname === "/account/change-password" && request.method === "POST") {
         response = await handleChangePassword(request, env);
       } else if (url.pathname === "/account/mfa/setup" && request.method === "POST") {
@@ -227,7 +231,17 @@ async function handleMfaSetup(request, env) {
   const label = encodeURIComponent(`GW2 Guild Tool:${account.email}`);
   const otpauthUri = `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent("GW2 Guild Tool")}&digits=${TOTP_DIGITS}&period=${TOTP_STEP_SECONDS}`;
 
-  return json({ secret, otpauth_uri: otpauthUri });
+  // Génération de QR entièrement côté serveur (lib pure JS sans dépendance
+  // Node, compatible avec l'isolat V8 des Workers) plutôt qu'un encodeur
+  // maison : l'algorithme QR (Reed-Solomon, placement des modules, masques)
+  // est trop facile à casser subtilement de mémoire pour un résultat qui
+  // "a l'air bon" mais ne scanne pas.
+  const qr = qrcode(0, "M");
+  qr.addData(otpauthUri);
+  qr.make();
+  const qrSvg = qr.createSvgTag({ cellSize: 4, margin: 4 });
+
+  return json({ secret, otpauth_uri: otpauthUri, qr_svg: qrSvg });
 }
 
 async function handleMfaConfirm(request, env) {
@@ -289,13 +303,7 @@ async function handleLoginMfa(request, env) {
 const GOOGLE_REDIRECT_URI = "https://gw2-guild-api-dev.duval-johan-91.workers.dev/auth/google/callback";
 const GUI_URL = "https://anarchicsoul.github.io/gw2-guild-tool/";
 
-async function handleGoogleStart(request, env) {
-  if (!env.GOOGLE_CLIENT_ID) return json({ error: "Connexion Google non configurée." }, 501);
-
-  const state = randomToken(24);
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-  await env.DB.prepare("INSERT INTO oauth_states (state, expires_at) VALUES (?, ?)").bind(state, expiresAt).run();
-
+function buildGoogleAuthUrl(env, state) {
   const params = new URLSearchParams({
     client_id: env.GOOGLE_CLIENT_ID,
     redirect_uri: GOOGLE_REDIRECT_URI,
@@ -304,7 +312,36 @@ async function handleGoogleStart(request, env) {
     state,
     prompt: "select_account",
   });
-  return Response.redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params.toString(), 302);
+  return "https://accounts.google.com/o/oauth2/v2/auth?" + params.toString();
+}
+
+async function handleGoogleStart(request, env) {
+  if (!env.GOOGLE_CLIENT_ID) return json({ error: "Connexion Google non configurée." }, 501);
+
+  const state = randomToken(24);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  await env.DB.prepare("INSERT INTO oauth_states (state, intent, account_id, expires_at) VALUES (?, 'login', NULL, ?)")
+    .bind(state, expiresAt).run();
+
+  return Response.redirect(buildGoogleAuthUrl(env, state), 302);
+}
+
+// Déclenché depuis "Mon compte" par un utilisateur déjà connecté qui veut
+// lier son compte Google. Contrairement à /auth/google/start, cet appel est
+// authentifié (fetch avec le header Authorization) : l'account_id est donc
+// fixé côté serveur ICI, avant même la redirection vers Google — le callback
+// n'a plus qu'à le relire depuis le state, jamais depuis une donnée cliente.
+async function handleGoogleLinkStart(request, env) {
+  if (!env.GOOGLE_CLIENT_ID) return json({ error: "Connexion Google non configurée." }, 501);
+  const account = await requireSession(request, env);
+  if (account instanceof Response) return account;
+
+  const state = randomToken(24);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  await env.DB.prepare("INSERT INTO oauth_states (state, intent, account_id, expires_at) VALUES (?, 'link', ?, ?)")
+    .bind(state, account.id, expiresAt).run();
+
+  return json({ auth_url: buildGoogleAuthUrl(env, state) });
 }
 
 async function handleGoogleCallback(request, env, url) {
@@ -318,7 +355,7 @@ async function handleGoogleCallback(request, env, url) {
   if (!code || !state) return fail("missing_params");
 
   const stateRow = await env.DB.prepare(
-    "SELECT state FROM oauth_states WHERE state = ? AND expires_at > datetime('now')"
+    "SELECT intent, account_id FROM oauth_states WHERE state = ? AND expires_at > datetime('now')"
   ).bind(state).first();
   if (!stateRow) return fail("invalid_state");
   await env.DB.prepare("DELETE FROM oauth_states WHERE state = ?").bind(state).run();
@@ -345,6 +382,20 @@ async function handleGoogleCallback(request, env, url) {
   if (!profileRes.ok) return fail("profile_fetch_failed");
   const profile = await profileRes.json();
   if (!profile.email_verified) return fail("email_not_verified");
+
+  if (stateRow.intent === "link") {
+    // account_id vient du state (fixé au moment de /account/google/link-start,
+    // pendant que le client était authentifié) — jamais d'un google_sub ou
+    // d'un id de compte fourni par cette requête de callback elle-même.
+    const conflict = await env.DB.prepare("SELECT id FROM accounts WHERE google_sub = ? AND id != ?")
+      .bind(profile.sub, stateRow.account_id).first();
+    if (conflict) return fail("google_already_linked");
+
+    await env.DB.prepare("UPDATE accounts SET google_sub = ? WHERE id = ?")
+      .bind(profile.sub, stateRow.account_id).run();
+    trackEvent(env, "google_link", "success");
+    return Response.redirect(GUI_URL + "?google_linked=1", 302);
+  }
 
   const exchangeCode = randomToken(24);
   const exchangeExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
@@ -446,6 +497,7 @@ async function handleMe(request, env) {
     email: account.email,
     role: account.role,
     mfa_enabled: !!account.mfa_enabled,
+    google_linked: !!account.google_sub,
     gw2_links: links.results.map((r) => ({
       id: r.id,
       name: r.gw2_account_name,
@@ -800,7 +852,7 @@ async function requireSession(request, env) {
   if (!token) return json({ error: "Non authentifié." }, 401);
 
   const row = await env.DB.prepare(
-    "SELECT accounts.id, accounts.email, accounts.role, accounts.mfa_enabled FROM sessions " +
+    "SELECT accounts.id, accounts.email, accounts.role, accounts.mfa_enabled, accounts.google_sub FROM sessions " +
     "JOIN accounts ON accounts.id = sessions.account_id " +
     "WHERE sessions.token = ? AND sessions.expires_at > datetime('now')"
   ).bind(token).first();

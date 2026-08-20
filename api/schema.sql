@@ -63,8 +63,15 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 );
 
 -- CSRF sur le flow OAuth Google (state à usage unique, courte durée de vie)
+-- intent='login' (par défaut) : connexion/inscription classique, account_id
+-- NULL. intent='link' : déclenché depuis "Mon compte" par un utilisateur déjà
+-- authentifié qui veut lier son compte Google — account_id est fixé au
+-- moment de la génération du state (donc côté serveur, jamais rejouable pour
+-- un autre compte), avant même la redirection vers Google.
 CREATE TABLE IF NOT EXISTS oauth_states (
   state      TEXT PRIMARY KEY,
+  intent     TEXT NOT NULL DEFAULT 'login',
+  account_id TEXT,
   expires_at TEXT NOT NULL
 );
 
