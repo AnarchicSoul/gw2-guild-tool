@@ -66,15 +66,40 @@
   main { width: 100%; max-width: 640px; }
 
   header {
-    margin-bottom: 2rem;
-    padding-bottom: 1.25rem;
-    border-bottom: 2px solid var(--gold);
+    margin-bottom: 0.9rem;
     display: flex;
     justify-content: space-between;
     align-items: baseline;
     gap: 1rem;
     flex-wrap: wrap;
   }
+
+  .status-row {
+    display: flex;
+    gap: 1.1rem;
+    flex-wrap: wrap;
+    margin-bottom: 2rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 2px solid var(--gold);
+  }
+
+  .status-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+    color: var(--ink-dim);
+  }
+
+  .status-dot {
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    background: var(--ink-dim);
+    flex: none;
+  }
+  .status-item.ok .status-dot { background: var(--ok); }
+  .status-item.down .status-dot { background: var(--danger); }
 
   h1 {
     font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
@@ -210,6 +235,12 @@
     </div>
   </header>
 
+  <div class="status-row" id="status-row">
+    <span class="status-item" id="status-app"><span class="status-dot"></span>Application</span>
+    <span class="status-item" id="status-db"><span class="status-dot"></span>Base de données</span>
+    <span class="status-item" id="status-gw2"><span class="status-dot"></span>Guild Wars 2</span>
+  </div>
+
   <section id="auth-section">
     <div class="tabs">
       <button type="button" class="active" id="tab-login">Connexion</button>
@@ -272,6 +303,36 @@
   function getToken() { return localStorage.getItem(TOKEN_KEY); }
   function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
   function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
+  // --- Statut (vert/rouge, rien de plus) ---
+  function setStatus(id, ok) {
+    const el = $(id);
+    el.classList.remove("ok", "down");
+    el.classList.add(ok ? "ok" : "down");
+  }
+
+  async function checkStatus() {
+    // Notre application (Worker + D1) : un seul appel à /health.
+    try {
+      const res = await fetch(API + "/health");
+      const data = await res.json();
+      setStatus("status-app", res.ok);
+      setStatus("status-db", !!data.db);
+    } catch (e) {
+      setStatus("status-app", false);
+      setStatus("status-db", false);
+    }
+
+    // Guild Wars 2 (leurs serveurs, pas les nôtres) : ping public direct
+    // depuis le navigateur, cohérent avec le reste de l'app (voir plus haut
+    // pourquoi on n'appelle jamais l'API GW2 depuis le Worker).
+    try {
+      const res = await fetch("https://api.guildwars2.com/v2/build");
+      setStatus("status-gw2", res.ok);
+    } catch (e) {
+      setStatus("status-gw2", false);
+    }
+  }
 
   function setMsg(el, text, type) {
     el.className = "msg" + (type ? " " + type : "");
@@ -480,6 +541,8 @@
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
     }[c]));
   }
+
+  checkStatus();
 
   (async () => {
     if (!getToken()) {

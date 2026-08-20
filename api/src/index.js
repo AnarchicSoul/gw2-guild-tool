@@ -35,8 +35,16 @@ export default {
     let response;
     try {
       if (url.pathname === "/health" && request.method === "GET") {
-        const result = await env.DB.prepare("SELECT 1 AS ok").first();
-        response = json({ status: "ok", db: result });
+        // L'API répond dans tous les cas (sinon cette requête n'aurait pas
+        // abouti) : seul l'état de la DB peut varier indépendamment.
+        let dbOk = false;
+        try {
+          const result = await env.DB.prepare("SELECT 1 AS ok").first();
+          dbOk = !!(result && result.ok === 1);
+        } catch (err) {
+          console.log(`health check: DB error: ${err}`);
+        }
+        response = json({ api: true, db: dbOk });
       } else if (url.pathname === "/auth/register" && request.method === "POST") {
         response = await handleRegister(request, env);
       } else if (url.pathname === "/auth/login" && request.method === "POST") {
