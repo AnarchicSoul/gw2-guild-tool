@@ -51,6 +51,8 @@ export default {
         response = await handleLogin(request, env);
       } else if (url.pathname === "/auth/logout" && request.method === "POST") {
         response = await handleLogout(request, env);
+      } else if (url.pathname === "/account/change-password" && request.method === "POST") {
+        response = await handleChangePassword(request, env);
       } else if (url.pathname === "/me" && request.method === "GET") {
         response = await handleMe(request, env);
       } else if (url.pathname === "/gw2/link" && request.method === "POST") {
@@ -64,7 +66,13 @@ export default {
       } else if (url.pathname === "/admin/promote" && request.method === "POST") {
         response = await handleAdminPromote(request, env);
       } else if (url.pathname === "/admin/users" && request.method === "GET") {
-        response = await handleAdminListUsers(request, env);
+        response = await handleAdminListUsers(request, env, url);
+      } else if (url.pathname === "/admin/users/delete" && request.method === "POST") {
+        response = await handleAdminDeleteUser(request, env);
+      } else if (url.pathname === "/admin/users/reset-password" && request.method === "POST") {
+        response = await handleAdminResetPassword(request, env);
+      } else if (url.pathname === "/admin/analytics" && request.method === "GET") {
+        response = await handleAdminAnalytics(request, env);
       } else {
         response = json({ error: "Route introuvable." }, 404);
       }
@@ -148,6 +156,31 @@ async function handleLogin(request, env) {
 async function handleLogout(request, env) {
   const token = bearerToken(request);
   if (token) await env.DB.prepare("DELETE FROM sessions WHERE token = ?").bind(token).run();
+  return json({ ok: true });
+}
+
+async function handleChangePassword(request, env) {
+  const account = await requireSession(request, env);
+  if (account instanceof Response) return account;
+
+  const body = await request.json().catch(() => ({}));
+  const currentPassword = body.current_password || "";
+  const newPassword = body.new_password || "";
+  if (newPassword.length < 10) return json({ error: "Le nouveau mot de passe doit faire au moins 10 caractères." }, 400);
+
+  const row = await env.DB.prepare("SELECT password_hash, password_salt FROM accounts WHERE id = ?").bind(account.id).first();
+  const ok = await verifyPassword(currentPassword, row.password_salt, row.password_hash);
+  if (!ok) return json({ error: "Mot de passe actuel incorrect." }, 401);
+
+  const { hash, salt } = await hashPassword(newPassword);
+  const currentToken = bearerToken(request);
+  await env.DB.prepare("UPDATE accounts SET password_hash = ?, password_salt = ? WHERE id = ?")
+    .bind(hash, salt, account.id).run();
+  // Invalide les autres sessions (autres appareils/navigateurs), garde celle-ci active.
+  await env.DB.prepare("DELETE FROM sessions WHERE account_id = ? AND token != ?")
+    .bind(account.id, currentToken).run();
+
+  trackEvent(env, "change_password", "success");
   return json({ ok: true });
 }
 
@@ -323,12 +356,110 @@ async function handleAdminPromote(request, env) {
   return json({ ok: true, email });
 }
 
-async function handleAdminListUsers(request, env) {
+// Pas sensible (visible dans wrangler.toml), donc en dur ici plutôt qu'en
+// secret — seul le token CF_ANALYTICS_TOKEN ci-dessous a besoin d'en être un.
+const CLOUDFLARE_ACCOUNT_ID = "8cfbb71203c475ce15c0f1d522670443";
+
+async function handleAdminAnalytics(request, env) {
   const admin = await requireAdmin(request, env);
   if (admin instanceof Response) return admin;
 
-  const users = await env.DB.prepare("SELECT id, email, role, created_at FROM accounts ORDER BY created_at").all();
-  return json({ users: users.results });
+  if (!env.CF_ANALYTICS_TOKEN) {
+    return json({ error: "Analytics non configuré (secret CF_ANALYTICS_TOKEN manquant)." }, 501);
+  }
+
+  const query =
+    "SELECT index1 AS event, blob1 AS outcome, count() AS n " +
+    "FROM gw2_guild_tool_events GROUP BY event, outcome ORDER BY event, n DESC";
+
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/analytics_engine/sql`,
+    { method: "POST", headers: { Authorization: `Bearer ${env.CF_ANALYTICS_TOKEN}` }, body: query }
+  );
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    return json({ error: "Erreur requête analytics.", detail: detail.slice(0, 300) }, 502);
+  }
+
+  const data = await res.json();
+  return json({ rows: data.data || [] });
+}
+
+const ADMIN_USERS_PAGE_SIZE = 20;
+
+async function handleAdminListUsers(request, env, url) {
+  const admin = await requireAdmin(request, env);
+  if (admin instanceof Response) return admin;
+
+  const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
+  const offset = (page - 1) * ADMIN_USERS_PAGE_SIZE;
+
+  const [users, totalRow] = await Promise.all([
+    env.DB.prepare("SELECT id, email, role, created_at FROM accounts ORDER BY created_at LIMIT ? OFFSET ?")
+      .bind(ADMIN_USERS_PAGE_SIZE, offset).all(),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM accounts").first(),
+  ]);
+
+  return json({
+    users: users.results,
+    page,
+    pageSize: ADMIN_USERS_PAGE_SIZE,
+    total: totalRow.n,
+    totalPages: Math.max(1, Math.ceil(totalRow.n / ADMIN_USERS_PAGE_SIZE)),
+  });
+}
+
+async function handleAdminDeleteUser(request, env) {
+  const admin = await requireAdmin(request, env);
+  if (admin instanceof Response) return admin;
+
+  const body = await request.json().catch(() => ({}));
+  const targetId = body.id;
+  if (!targetId) return json({ error: "Identifiant manquant." }, 400);
+  if (targetId === admin.id) return json({ error: "Tu ne peux pas te supprimer toi-même." }, 400);
+
+  const target = await env.DB.prepare("SELECT id, role FROM accounts WHERE id = ?").bind(targetId).first();
+  if (!target) return json({ error: "Compte introuvable." }, 404);
+
+  if (target.role === "admin") {
+    const adminCount = await env.DB.prepare("SELECT COUNT(*) AS n FROM accounts WHERE role = 'admin'").first();
+    if (adminCount.n <= 1) return json({ error: "Impossible de supprimer le dernier admin." }, 400);
+  }
+
+  const links = await env.DB.prepare("SELECT id FROM gw2_links WHERE account_id = ?").bind(targetId).all();
+  for (const link of links.results) {
+    await env.DB.prepare("DELETE FROM user_guilds WHERE gw2_link_id = ?").bind(link.id).run();
+  }
+  await env.DB.prepare("DELETE FROM gw2_links WHERE account_id = ?").bind(targetId).run();
+  await env.DB.prepare("DELETE FROM sessions WHERE account_id = ?").bind(targetId).run();
+  await env.DB.prepare("DELETE FROM accounts WHERE id = ?").bind(targetId).run();
+
+  trackEvent(env, "admin_delete_user", "success");
+  return json({ ok: true });
+}
+
+async function handleAdminResetPassword(request, env) {
+  const admin = await requireAdmin(request, env);
+  if (admin instanceof Response) return admin;
+
+  const body = await request.json().catch(() => ({}));
+  const targetId = body.id;
+  const newPassword = body.new_password || "";
+  if (!targetId) return json({ error: "Identifiant manquant." }, 400);
+  if (newPassword.length < 10) return json({ error: "Le mot de passe doit faire au moins 10 caractères." }, 400);
+
+  const target = await env.DB.prepare("SELECT id FROM accounts WHERE id = ?").bind(targetId).first();
+  if (!target) return json({ error: "Compte introuvable." }, 404);
+
+  const { hash, salt } = await hashPassword(newPassword);
+  await env.DB.prepare("UPDATE accounts SET password_hash = ?, password_salt = ? WHERE id = ?")
+    .bind(hash, salt, targetId).run();
+  // Un mot de passe réinitialisé par un admin invalide les sessions existantes.
+  await env.DB.prepare("DELETE FROM sessions WHERE account_id = ?").bind(targetId).run();
+
+  trackEvent(env, "admin_reset_password", "success");
+  return json({ ok: true });
 }
 
 // --- Sessions ---
