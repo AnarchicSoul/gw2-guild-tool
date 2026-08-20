@@ -56,6 +56,19 @@ CREATE TABLE IF NOT EXISTS user_guilds (
 );
 CREATE INDEX IF NOT EXISTS idx_user_guilds_guild ON user_guilds(guild_id);
 
+-- Instantané de progression GW2 (raids/donjons/maîtrises/succès/fractale/
+-- légendaire), synchronisé volontairement par chaque membre depuis SON
+-- PROPRE navigateur avec SA PROPRE clé (jamais calculé côté Worker, jamais
+-- une clé d'un membre exposée à un autre). Le Worker se contente de stocker
+-- ce JSON tel quel — toute la logique de comparaison/suggestion vit côté
+-- GUI, qui est aussi seule à connaître les structures GW2 (raids, donjons,
+-- maîtrises) nécessaires pour interpréter ce blob.
+CREATE TABLE IF NOT EXISTS gw2_progress (
+  gw2_link_id   TEXT PRIMARY KEY REFERENCES gw2_links(id),
+  progress_json TEXT NOT NULL,
+  synced_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Anti-abus : évite que l'app elle-même martèle l'API GW2 (cooldown par compte)
 CREATE TABLE IF NOT EXISTS rate_limits (
   key     TEXT PRIMARY KEY,

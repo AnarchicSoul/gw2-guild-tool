@@ -83,6 +83,10 @@ export default {
         response = await handleRevealGw2Key(request, env);
       } else if (url.pathname === "/guild/matches" && request.method === "GET") {
         response = await handleGuildMatches(request, env);
+      } else if (url.pathname === "/gw2/sync-progress" && request.method === "POST") {
+        response = await handleSyncProgress(request, env);
+      } else if (/^\/guild\/[^/]+\/progress$/.test(url.pathname) && request.method === "GET") {
+        response = await handleGuildProgress(request, env, url.pathname.split("/")[2]);
       } else if (url.pathname === "/admin/bootstrap" && request.method === "POST") {
         response = await handleAdminBootstrap(request, env);
       } else if (url.pathname === "/admin/promote" && request.method === "POST") {
@@ -642,6 +646,68 @@ async function handleGuildMatches(request, env) {
   });
 
   return json({ matches: byGuild });
+}
+
+// Stockage brut d'un instantané de progression (raids/donjons/maîtrises/
+// succès/fractale/légendaire) — calculé et envoyé par le navigateur du
+// propriétaire lui-même, jamais par le Worker. Le format interne du JSON
+// n'est pas interprété ici, seule la GUI sait le lire (elle seule connaît
+// les structures GW2 nécessaires pour lui donner un sens).
+async function handleSyncProgress(request, env) {
+  const account = await requireSession(request, env);
+  if (account instanceof Response) return account;
+
+  const body = await request.json().catch(() => ({}));
+  const linkId = body.gw2_link_id;
+  const progress = body.progress;
+  if (!linkId || typeof progress !== "object" || progress === null) {
+    return json({ error: "Requête invalide." }, 400);
+  }
+
+  const link = await env.DB.prepare("SELECT account_id FROM gw2_links WHERE id = ?").bind(linkId).first();
+  if (!link || link.account_id !== account.id) return json({ error: "Introuvable." }, 404);
+
+  const cooldownError = await checkCooldown(env, "syncprogress:" + account.id, 3000);
+  if (cooldownError) return cooldownError;
+
+  await env.DB.prepare(
+    "INSERT INTO gw2_progress (gw2_link_id, progress_json, synced_at) VALUES (?, ?, datetime('now')) " +
+    "ON CONFLICT(gw2_link_id) DO UPDATE SET progress_json = excluded.progress_json, synced_at = excluded.synced_at"
+  ).bind(linkId, JSON.stringify(progress)).run();
+
+  trackEvent(env, "gw2_sync_progress", "success");
+  return json({ ok: true });
+}
+
+// Renvoie la progression synchronisée de tous les membres inscrits d'une
+// guilde donnée — accessible seulement si TOI-MÊME en es membre (même
+// frontière de confiance que /guild/matches, qui expose déjà les noms de
+// compte des guildmates inscrits).
+async function handleGuildProgress(request, env, guildId) {
+  const account = await requireSession(request, env);
+  if (account instanceof Response) return account;
+
+  const membership = await env.DB.prepare(
+    "SELECT 1 FROM user_guilds ug JOIN gw2_links gl ON gl.id = ug.gw2_link_id " +
+    "WHERE ug.guild_id = ? AND gl.account_id = ? LIMIT 1"
+  ).bind(guildId, account.id).first();
+  if (!membership) return json({ error: "Tu n'es pas membre de cette guilde." }, 403);
+
+  const rows = await env.DB.prepare(
+    "SELECT gl.id AS gw2_link_id, gl.gw2_account_name AS name, gp.progress_json, gp.synced_at " +
+    "FROM user_guilds ug JOIN gw2_links gl ON gl.id = ug.gw2_link_id " +
+    "LEFT JOIN gw2_progress gp ON gp.gw2_link_id = gl.id " +
+    "WHERE ug.guild_id = ?"
+  ).bind(guildId).all();
+
+  const members = rows.results.map((r) => ({
+    gw2_link_id: r.gw2_link_id,
+    name: r.name,
+    synced_at: r.synced_at || null,
+    progress: r.progress_json ? JSON.parse(r.progress_json) : null,
+  }));
+
+  return json({ members });
 }
 
 // --- Administration ---

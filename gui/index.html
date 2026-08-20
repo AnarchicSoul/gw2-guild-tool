@@ -381,6 +381,29 @@
   .member-list .badge.registered { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); }
   .member-list .badge.self { color: var(--gold); border-color: var(--gold-strong); }
 
+  .outing-panel { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--line); }
+  .outing-sync-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; flex-wrap: wrap; }
+  .outing-sync-row .sync-status { font-size: 0.75rem; color: var(--ink-dim); }
+  .outing-categories { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0.4rem; margin-bottom: 0.75rem; }
+  .outing-categories button { font-size: 0.8rem; padding: 0.5rem 0.4rem; }
+  .outing-categories button.active { background: var(--gold); color: var(--surface); border-color: var(--gold-strong); }
+  .outing-members { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.6rem; }
+  .outing-members label {
+    display: flex; align-items: center; gap: 0.3rem;
+    font-size: 0.8rem; padding: 0.3rem 0.6rem;
+    border: 1px solid var(--line); border-radius: 999px;
+    background: var(--surface-2); cursor: pointer;
+  }
+  .outing-result { font-size: 0.9rem; }
+  .outing-result .suggestion-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.4rem 0.6rem; margin-bottom: 0.3rem;
+    border: 1px solid var(--line); border-radius: 3px; background: var(--surface-2);
+  }
+  .outing-result .suggestion-item .tier-badge { font-size: 0.7rem; color: var(--ink-dim); }
+  .outing-result .suggestion-item.top { border-color: var(--gold-strong); }
+  .outing-result .suggestion-item.top .tier-badge { color: var(--gold); }
+
   .hidden { display: none; }
 
   .spinner {
@@ -832,7 +855,7 @@
     if (!link) return null;
     if (revealedKeys.has(link.id)) return revealedKeys.get(link.id);
     const data = await api("/gw2/reveal-key", { method: "POST", body: JSON.stringify({ gw2_link_id: link.id }) });
-    revealedKeys.set(link.id, { apiKey: data.api_key, myName: link.name });
+    revealedKeys.set(link.id, { apiKey: data.api_key, myName: link.name, linkId: link.id });
     return revealedKeys.get(link.id);
   }
 
@@ -902,6 +925,390 @@
     }
   }
 
+  // --- Sorties de groupe (raid/donjon/maîtrise/succès/fractale/légendaire) ---
+  //
+  // Principe : chaque membre synchronise SA PROPRE progression depuis SON
+  // PROPRE navigateur (jamais la clé d'un autre membre, jamais un appel GW2
+  // depuis le Worker) — le résultat (déjà comparé à la structure complète du
+  // jeu) est stocké tel quel côté serveur. Calculer une suggestion de groupe
+  // ne nécessite ensuite AUCUN nouvel appel GW2 : on relit juste les
+  // instantanés déjà stockés des membres sélectionnés et on compare en JS.
+
+  const OUTING_CATEGORIES = [
+    { key: "raid", label: "Raid" },
+    { key: "dungeon", label: "Donjon" },
+    { key: "mastery", label: "Maîtrise" },
+    { key: "item", label: "Succès aléatoire" },
+    { key: "fractal", label: "Fractale" },
+    { key: "legendary", label: "Légendaire" },
+  ];
+
+  async function fetchGw2(path, apiKey) {
+    const sep = path.includes("?") ? "&" : "?";
+    const url = "https://api.guildwars2.com/v2" + path + (apiKey ? sep + "access_token=" + encodeURIComponent(apiKey) : "");
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return { ok: false, status: res.status };
+      return { ok: true, data: await res.json() };
+    } catch {
+      return { ok: false, status: 0 };
+    }
+  }
+
+  // Petit pool de concurrence pour ne pas envoyer des dizaines de requêtes
+  // GW2 toutes en même temps depuis le navigateur.
+  async function mapWithConcurrency(items, limit, fn) {
+    const results = new Array(items.length);
+    let next = 0;
+    async function worker() {
+      while (next < items.length) {
+        const i = next++;
+        results[i] = await fn(items[i], i);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+  }
+
+  function chunk(arr, size) {
+    const out = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  }
+
+  // Catalogue des succès "intéressants" (récompensant un item, ou liés à une
+  // légendaire) — construit une fois depuis les endpoints PUBLICS de GW2
+  // (aucune clé nécessaire) et mis en cache 24h en localStorage, partagé par
+  // tous les membres qui utilisent ce navigateur.
+  const CATALOG_CACHE_KEY = "gw2_guild_tool_achv_catalog_v1";
+  const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
+
+  async function getAchievementCatalog(onProgress) {
+    try {
+      const cached = JSON.parse(localStorage.getItem(CATALOG_CACHE_KEY) || "null");
+      if (cached && Date.now() - cached.fetchedAt < CATALOG_TTL_MS) return cached;
+    } catch {}
+
+    if (onProgress) onProgress("Chargement du catalogue de succès (une fois par jour, ~30s)…");
+
+    const catRes = await fetchGw2("/achievements/categories?ids=all", null);
+    if (!catRes.ok) throw new Error("Impossible de charger le catalogue de succès GW2.");
+    const categories = catRes.data;
+
+    // Catégories "légendaire" repérées par leur nom — GW2 nomme ses
+    // catégories de collection légendaire explicitement (Legendary Weapons,
+    // Legendary Armor, Legendary Trinkets…).
+    const legendaryCategoryIds = new Set(
+      categories.filter((c) => /legendary/i.test(c.name)).flatMap((c) => c.achievements || [])
+    );
+
+    // Pour les succès "à item", on exclut les catégories quotidiennes/PvP/
+    // WvW (rotatives, peu pertinentes pour "aller faire un truc ensemble ce
+    // soir") et on garde le reste — collections d'extension, monde ouvert,
+    // histoire vivante, etc.
+    const relevantIds = new Set(
+      categories
+        .filter((c) => !/daily|pvp|wvw/i.test(c.name))
+        .flatMap((c) => c.achievements || [])
+    );
+    legendaryCategoryIds.forEach((id) => relevantIds.add(id));
+
+    const idBatches = chunk(Array.from(relevantIds), 200);
+    const detailBatches = await mapWithConcurrency(idBatches, 6, async (batch) => {
+      const res = await fetchGw2("/achievements?ids=" + batch.join(","), null);
+      return res.ok ? res.data : [];
+    });
+    const details = detailBatches.flat();
+
+    const itemAchievements = details
+      .filter((a) => Array.isArray(a.rewards) && a.rewards.some((r) => r.type === "Item"))
+      .map((a) => ({ id: a.id, name: a.name }));
+    const legendaryAchievements = details
+      .filter((a) => legendaryCategoryIds.has(a.id))
+      .map((a) => ({ id: a.id, name: a.name }));
+
+    const catalog = { fetchedAt: Date.now(), itemAchievements, legendaryAchievements };
+    try {
+      localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(catalog));
+    } catch {
+      // quota localStorage dépassé : tant pis, on garde juste le résultat en mémoire pour cette page
+    }
+    return catalog;
+  }
+
+  async function computeProgress(apiKey, myName, onProgress) {
+    const progress = { myName, computedAt: new Date().toISOString() };
+
+    if (onProgress) onProgress("Raids…");
+    const [raidsStatic, raidsCleared] = await Promise.all([
+      fetchGw2("/raids?ids=all", apiKey),
+      fetchGw2("/account/raids", apiKey),
+    ]);
+    if (raidsStatic.ok && raidsCleared.ok) {
+      const cleared = new Set(raidsCleared.data);
+      // /v2/raids?ids=all renvoie des raids contenant chacun plusieurs
+      // wings (pas les wings directement) — on aplatit en gardant un ordre
+      // global croissant (raid -> wing -> boss) comme proxy de difficulté.
+      let tier = 0;
+      progress.raids = raidsStatic.data.flatMap((raid) =>
+        raid.wings.map((wing) => ({
+          id: wing.id,
+          bosses: wing.events
+            .filter((e) => e.type === "Boss")
+            .map((e) => ({ id: e.id, cleared: cleared.has(e.id), tier: tier++ })),
+        }))
+      );
+    }
+
+    if (onProgress) onProgress("Donjons…");
+    const [dungeonsStatic, dungeonsToday] = await Promise.all([
+      fetchGw2("/dungeons?ids=all", apiKey),
+      fetchGw2("/account/dungeons", apiKey),
+    ]);
+    if (dungeonsStatic.ok && dungeonsToday.ok) {
+      const doneToday = new Set(dungeonsToday.data);
+      progress.dungeons = dungeonsStatic.data.map((d) => ({
+        id: d.id,
+        paths: d.paths.map((p) => ({ id: p.id, type: p.type, doneToday: doneToday.has(p.id) })),
+      }));
+    }
+
+    if (onProgress) onProgress("Maîtrises…");
+    const [masteriesStatic, myMasteries] = await Promise.all([
+      fetchGw2("/masteries?ids=all", apiKey),
+      fetchGw2("/account/masteries", apiKey),
+    ]);
+    if (masteriesStatic.ok && myMasteries.ok) {
+      const levels = {};
+      myMasteries.data.forEach((m) => { levels[m.id] = m.level != null ? m.level + 1 : 0; });
+      progress.masteries = masteriesStatic.data.map((m) => ({
+        id: m.id, name: m.name, maxLevel: m.levels.length, myLevel: levels[m.id] || 0,
+      }));
+    }
+
+    if (onProgress) onProgress("Fractale…");
+    const [accountRes, progressionRes] = await Promise.all([
+      fetchGw2("/account", apiKey),
+      fetchGw2("/account/progression", apiKey),
+    ]);
+    if (accountRes.ok) progress.fractalLevel = accountRes.data.fractal_level || 0;
+    if (progressionRes.ok) {
+      const impedance = progressionRes.data.find((p) => p.id === "fractal_agony_impedance");
+      progress.agonyResistance = impedance ? impedance.value : 0;
+    }
+
+    if (onProgress) onProgress("Succès (catalogue + progression)…");
+    const [catalog, myAchievements] = await Promise.all([
+      getAchievementCatalog(onProgress),
+      fetchGw2("/account/achievements", apiKey),
+    ]);
+    if (myAchievements.ok) {
+      const done = new Set(myAchievements.data.filter((a) => a.done).map((a) => a.id));
+      progress.itemAchievements = catalog.itemAchievements.map((a) => ({ ...a, done: done.has(a.id) }));
+      progress.legendaryAchievements = catalog.legendaryAchievements.map((a) => ({ ...a, done: done.has(a.id) }));
+    }
+
+    return progress;
+  }
+
+  async function syncMyProgress(guildId, statusEl) {
+    statusEl.textContent = "";
+    statusEl.className = "sync-status";
+    try {
+      const keyInfo = await getKeyForGuild(guildId);
+      if (!keyInfo) throw new Error("Aucune clé liée ne couvre cette guilde.");
+      const progress = await computeProgress(keyInfo.apiKey, keyInfo.myName, (msg) => { statusEl.textContent = msg; });
+      await api("/gw2/sync-progress", {
+        method: "POST",
+        body: JSON.stringify({ gw2_link_id: keyInfo.linkId, progress }),
+      });
+      statusEl.textContent = "Synchronisé à l'instant.";
+    } catch (err) {
+      statusEl.textContent = "Erreur : " + err.message;
+      statusEl.className = "sync-status";
+      statusEl.style.color = "var(--danger)";
+    }
+  }
+
+  // --- Algorithmes de suggestion (purs, à partir des instantanés déjà stockés) ---
+
+  function suggestRaid(members) {
+    const valid = members.filter((m) => m.progress && m.progress.raids);
+    if (!valid.length) return { empty: "Personne (parmi les membres sélectionnés) n'a encore synchronisé ses raids." };
+    const candidates = [];
+    valid[0].progress.raids.forEach((wing) => {
+      wing.bosses.forEach((boss) => {
+        const clearedByAnyone = valid.some((m) => {
+          const w = m.progress.raids.find((ww) => ww.id === wing.id);
+          const b = w && w.bosses.find((bb) => bb.id === boss.id);
+          return b && b.cleared;
+        });
+        if (!clearedByAnyone) candidates.push({ label: wing.id + " — " + boss.id, tier: boss.tier });
+      });
+    });
+    candidates.sort((a, b) => a.tier - b.tier);
+    if (!candidates.length) return { empty: "Tous les boss de raid ont déjà été faits cette semaine par ce groupe. 🎉" };
+    return { candidates, note: "Ordre indicatif (par aile, du contenu le plus ancien au plus récent)." };
+  }
+
+  function suggestDungeon(members) {
+    const valid = members.filter((m) => m.progress && m.progress.dungeons);
+    if (!valid.length) return { empty: "Personne n'a encore synchronisé ses donjons." };
+    const candidates = [];
+    valid[0].progress.dungeons.forEach((d) => {
+      d.paths.forEach((p) => {
+        const doneByAnyone = valid.some((m) => {
+          const dd = m.progress.dungeons.find((x) => x.id === d.id);
+          const pp = dd && dd.paths.find((x) => x.id === p.id);
+          return pp && pp.doneToday;
+        });
+        if (!doneByAnyone) candidates.push({ label: d.id + " — " + p.id + " (" + p.type + ")", tier: 0 });
+      });
+    });
+    if (!candidates.length) return { empty: "Récompense quotidienne déjà prise sur tous les chemins par ce groupe aujourd'hui." };
+    return {
+      candidates,
+      note: "GW2 ne suit que la récompense quotidienne (par chemin), pas l'historique de complétion à vie.",
+    };
+  }
+
+  function suggestMastery(members) {
+    const valid = members.filter((m) => m.progress && m.progress.masteries);
+    if (!valid.length) return { empty: "Personne n'a encore synchronisé ses maîtrises." };
+    const candidates = valid[0].progress.masteries
+      .filter((m) => m.myLevel < m.maxLevel)
+      .filter((m) => valid.every((mem) => {
+        const mm = mem.progress.masteries.find((x) => x.id === m.id);
+        return mm && mm.myLevel < mm.maxLevel;
+      }))
+      .map((m) => ({ label: m.name + " (" + m.myLevel + "/" + m.maxLevel + ")", tier: m.myLevel }));
+    candidates.sort((a, b) => a.tier - b.tier);
+    if (!candidates.length) return { empty: "Toutes les maîtrises communes sont déjà maximisées pour ce groupe." };
+    return { candidates, note: "Niveau affiché = ta propre progression (pas forcément identique pour les autres)." };
+  }
+
+  function suggestItem(members) {
+    const valid = members.filter((m) => m.progress && m.progress.itemAchievements);
+    if (!valid.length) return { empty: "Personne n'a encore synchronisé ses succès." };
+    const pool = valid[0].progress.itemAchievements.filter((a) =>
+      valid.every((m) => {
+        const aa = m.progress.itemAchievements.find((x) => x.id === a.id);
+        return aa && !aa.done;
+      })
+    );
+    if (!pool.length) return { empty: "Rien à proposer : aucun succès à récompense d'item en commun pour ce groupe." };
+    const picked = pool[Math.floor(Math.random() * pool.length)];
+    return { candidates: [{ label: picked.name, tier: 0 }], note: "Tiré au hasard parmi " + pool.length + " succès en commun non terminés." };
+  }
+
+  function suggestFractal(members) {
+    const valid = members.filter((m) => m.progress && typeof m.progress.fractalLevel === "number");
+    if (!valid.length) return { empty: "Personne n'a encore synchronisé sa fractale." };
+    let bottleneckLevel = valid[0], bottleneckAr = valid[0];
+    valid.forEach((m) => {
+      if (m.progress.fractalLevel < bottleneckLevel.progress.fractalLevel) bottleneckLevel = m;
+      if ((m.progress.agonyResistance || 0) < (bottleneckAr.progress.agonyResistance || 0)) bottleneckAr = m;
+    });
+    return {
+      candidates: [
+        { label: "Palier accessible par tout le groupe : " + bottleneckLevel.progress.fractalLevel, tier: 0 },
+        { label: "Résistance à l'agonie limitante : " + (bottleneckAr.progress.agonyResistance || 0) + " (" + bottleneckAr.name + ")", tier: 1 },
+      ],
+      note: "GW2 n'expose pas si les fractales quotidiennes/hebdo ont déjà été faites — seulement le niveau et la RA.",
+    };
+  }
+
+  function suggestLegendary(members) {
+    const valid = members.filter((m) => m.progress && m.progress.legendaryAchievements);
+    if (!valid.length) return { empty: "Personne n'a encore synchronisé ses succès légendaires." };
+    const pool = valid[0].progress.legendaryAchievements.filter((a) =>
+      valid.every((m) => {
+        const aa = m.progress.legendaryAchievements.find((x) => x.id === a.id);
+        return aa && !aa.done;
+      })
+    );
+    if (!pool.length) return { empty: "Rien en commun : aucune étape légendaire non terminée pour ce groupe (ou catalogue incomplet)." };
+    return {
+      candidates: pool.slice(0, 10).map((a) => ({ label: a.name, tier: 0 })),
+      note: "Liste heuristique (catégories nommées \"Legendary…\" côté GW2) — pas garantie exhaustive.",
+    };
+  }
+
+  const OUTING_SUGGESTERS = {
+    raid: suggestRaid, dungeon: suggestDungeon, mastery: suggestMastery,
+    item: suggestItem, fractal: suggestFractal, legendary: suggestLegendary,
+  };
+
+  function initOutingPanel(guildId, panel) {
+    panel.className = "outing-panel";
+    panel.innerHTML =
+      '<div class="outing-sync-row">' +
+      '<button type="button" class="ghost sync-btn">Synchroniser ma progression</button>' +
+      '<span class="sync-status"></span>' +
+      "</div>" +
+      '<div class="outing-categories">' +
+      OUTING_CATEGORIES.map((c) => '<button type="button" class="ghost outing-cat" data-cat="' + c.key + '">' + c.label + "</button>").join("") +
+      "</div>" +
+      '<div class="outing-members hidden"></div>' +
+      '<div class="outing-result"></div>';
+
+    const statusEl = panel.querySelector(".sync-status");
+    panel.querySelector(".sync-btn").addEventListener("click", () => syncMyProgress(guildId, statusEl));
+
+    const membersEl = panel.querySelector(".outing-members");
+    const resultEl = panel.querySelector(".outing-result");
+    let activeCat = null;
+    let cachedMembers = null;
+
+    async function loadMembers() {
+      if (cachedMembers) return cachedMembers;
+      const data = await api("/guild/" + guildId + "/progress");
+      cachedMembers = data.members;
+      return cachedMembers;
+    }
+
+    function renderResult() {
+      if (!activeCat) return;
+      const checked = Array.from(membersEl.querySelectorAll("input:checked")).map((i) => i.value);
+      const selected = (cachedMembers || []).filter((m) => checked.includes(m.gw2_link_id));
+      const result = OUTING_SUGGESTERS[activeCat](selected);
+      if (result.empty) {
+        resultEl.innerHTML = '<div class="msg info" style="display:block;">' + escapeHtml(result.empty) + "</div>";
+        return;
+      }
+      const items = result.candidates
+        .map((c, i) => '<div class="suggestion-item' + (i === 0 ? " top" : "") + '"><span>' + escapeHtml(c.label) + '</span><span class="tier-badge">' + (i === 0 ? "★ suggestion" : "") + "</span></div>")
+        .join("");
+      resultEl.innerHTML = items + (result.note ? '<p style="font-size:0.75rem; color:var(--ink-dim); margin-top:0.5rem;">' + escapeHtml(result.note) + "</p>" : "");
+    }
+
+    panel.querySelectorAll(".outing-cat").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        panel.querySelectorAll(".outing-cat").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        activeCat = btn.dataset.cat;
+        resultEl.innerHTML = '<div class="msg info" style="display:block;"><span class="spinner"></span>Chargement…</div>';
+        try {
+          const members = await loadMembers();
+          const synced = members.filter((m) => m.progress);
+          if (!synced.length) {
+            membersEl.classList.add("hidden");
+            resultEl.innerHTML = '<div class="msg info" style="display:block;">Personne n\'a encore synchronisé sa progression dans cette guilde — clique "Synchroniser ma progression" ci-dessus pour commencer.</div>';
+            return;
+          }
+          membersEl.classList.remove("hidden");
+          membersEl.innerHTML = synced
+            .map((m) => '<label><input type="checkbox" value="' + escapeHtml(m.gw2_link_id) + '" checked> ' + escapeHtml(m.name) + "</label>")
+            .join("");
+          membersEl.querySelectorAll("input").forEach((i) => i.addEventListener("change", renderResult));
+          renderResult();
+        } catch (err) {
+          resultEl.innerHTML = '<div class="msg error" style="display:block;">' + escapeHtml(err.message) + "</div>";
+        }
+      });
+    });
+  }
+
   async function loadMatches() {
     const el = $("matches-result");
     el.innerHTML = '<div class="msg info" style="display:block;"><span class="spinner"></span>Chargement…</div>';
@@ -929,11 +1336,23 @@
           "<h4>Déjà inscrits sur l'outil</h4><ul>" + registeredList + "</ul>" +
           '<button type="button" class="ghost roster-btn" style="margin-top:0.5rem;">Voir tous les membres de la guilde</button>' +
           '<div class="roster-result"></div>' +
+          '<button type="button" class="ghost outing-btn" style="margin-top:0.5rem;">Créer une sortie</button>' +
+          '<div class="outing-panel hidden"></div>' +
           "</div>";
         block.querySelector(".roster-btn").addEventListener("click", (e) => {
           e.preventDefault();
           const names = registeredMembers.map((m) => m.name);
           loadRoster(gid, names, block.querySelector(".roster-result"));
+        });
+        block.querySelector(".outing-btn").addEventListener("click", (e) => {
+          e.preventDefault();
+          const panel = block.querySelector(".outing-panel");
+          const nowHidden = !panel.classList.contains("hidden");
+          panel.classList.toggle("hidden", nowHidden);
+          if (!nowHidden && !panel.dataset.initialized) {
+            panel.dataset.initialized = "1";
+            initOutingPanel(gid, panel);
+          }
         });
         el.appendChild(block);
       }
