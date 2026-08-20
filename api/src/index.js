@@ -51,8 +51,16 @@ export default {
         response = await handleLogin(request, env);
       } else if (url.pathname === "/auth/logout" && request.method === "POST") {
         response = await handleLogout(request, env);
+      } else if (url.pathname === "/auth/login/mfa" && request.method === "POST") {
+        response = await handleLoginMfa(request, env);
       } else if (url.pathname === "/account/change-password" && request.method === "POST") {
         response = await handleChangePassword(request, env);
+      } else if (url.pathname === "/account/mfa/setup" && request.method === "POST") {
+        response = await handleMfaSetup(request, env);
+      } else if (url.pathname === "/account/mfa/confirm" && request.method === "POST") {
+        response = await handleMfaConfirm(request, env);
+      } else if (url.pathname === "/account/mfa/disable" && request.method === "POST") {
+        response = await handleMfaDisable(request, env);
       } else if (url.pathname === "/me" && request.method === "GET") {
         response = await handleMe(request, env);
       } else if (url.pathname === "/gw2/link" && request.method === "POST") {
@@ -136,7 +144,7 @@ async function handleLogin(request, env) {
   if (cooldownError) return cooldownError;
 
   const account = await env.DB.prepare(
-    "SELECT id, email, password_hash, password_salt FROM accounts WHERE email = ?"
+    "SELECT id, email, password_hash, password_salt, mfa_enabled FROM accounts WHERE email = ?"
   ).bind(email).first();
 
   if (!account) {
@@ -149,6 +157,15 @@ async function handleLogin(request, env) {
   if (!ok) {
     trackEvent(env, "login", "failure");
     return genericError();
+  }
+
+  if (account.mfa_enabled) {
+    const challengeToken = randomToken(24);
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    await env.DB.prepare("INSERT INTO mfa_challenges (token, account_id, expires_at) VALUES (?, ?, ?)")
+      .bind(challengeToken, account.id, expiresAt).run();
+    trackEvent(env, "login", "mfa_required");
+    return json({ mfa_required: true, challenge_token: challengeToken });
   }
 
   trackEvent(env, "login", "success");
@@ -186,6 +203,79 @@ async function handleChangePassword(request, env) {
   return json({ ok: true });
 }
 
+// --- MFA (TOTP) ---
+
+async function handleMfaSetup(request, env) {
+  const account = await requireSession(request, env);
+  if (account instanceof Response) return account;
+
+  const secret = generateTotpSecret();
+  const encrypted = await encryptSecret(env, secret);
+  // Stocké mais mfa_enabled reste à 0 tant que /account/mfa/confirm n'a pas
+  // vérifié un vrai code — évite de s'activer un MFA qu'on n'a pas su lire.
+  await env.DB.prepare("UPDATE accounts SET mfa_secret_encrypted = ? WHERE id = ?")
+    .bind(encrypted, account.id).run();
+
+  const label = encodeURIComponent(`GW2 Guild Tool:${account.email}`);
+  const otpauthUri = `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent("GW2 Guild Tool")}&digits=${TOTP_DIGITS}&period=${TOTP_STEP_SECONDS}`;
+
+  return json({ secret, otpauth_uri: otpauthUri });
+}
+
+async function handleMfaConfirm(request, env) {
+  const account = await requireSession(request, env);
+  if (account instanceof Response) return account;
+
+  const body = await request.json().catch(() => ({}));
+  const row = await env.DB.prepare("SELECT mfa_secret_encrypted FROM accounts WHERE id = ?").bind(account.id).first();
+  if (!row.mfa_secret_encrypted) return json({ error: "Lance d'abord la configuration du MFA." }, 400);
+
+  const secret = await decryptSecret(env, row.mfa_secret_encrypted);
+  const ok = await verifyTotp(secret, body.code);
+  if (!ok) return json({ error: "Code invalide." }, 401);
+
+  await env.DB.prepare("UPDATE accounts SET mfa_enabled = 1 WHERE id = ?").bind(account.id).run();
+  trackEvent(env, "mfa_enable", "success");
+  return json({ ok: true });
+}
+
+async function handleMfaDisable(request, env) {
+  const account = await requireSession(request, env);
+  if (account instanceof Response) return account;
+
+  const body = await request.json().catch(() => ({}));
+  const row = await env.DB.prepare("SELECT password_hash, password_salt FROM accounts WHERE id = ?").bind(account.id).first();
+  const ok = await verifyPassword(body.current_password || "", row.password_salt, row.password_hash);
+  if (!ok) return json({ error: "Mot de passe actuel incorrect." }, 401);
+
+  await env.DB.prepare("UPDATE accounts SET mfa_enabled = 0, mfa_secret_encrypted = NULL WHERE id = ?").bind(account.id).run();
+  trackEvent(env, "mfa_disable", "success");
+  return json({ ok: true });
+}
+
+async function handleLoginMfa(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const challengeToken = body.challenge_token || "";
+  const genericError = () => json({ error: "Code invalide ou expiré." }, 401);
+
+  const challenge = await env.DB.prepare(
+    "SELECT account_id FROM mfa_challenges WHERE token = ? AND expires_at > datetime('now')"
+  ).bind(challengeToken).first();
+  if (!challenge) return genericError();
+
+  const account = await env.DB.prepare("SELECT id, email, mfa_secret_encrypted FROM accounts WHERE id = ?")
+    .bind(challenge.account_id).first();
+  if (!account || !account.mfa_secret_encrypted) return genericError();
+
+  const secret = await decryptSecret(env, account.mfa_secret_encrypted);
+  const ok = await verifyTotp(secret, body.code);
+  if (!ok) return genericError();
+
+  await env.DB.prepare("DELETE FROM mfa_challenges WHERE token = ?").bind(challengeToken).run();
+  trackEvent(env, "login_mfa", "success");
+  return startSession(env, account.id, account.email);
+}
+
 async function handleMe(request, env) {
   const account = await requireSession(request, env);
   if (account instanceof Response) return account;
@@ -200,6 +290,7 @@ async function handleMe(request, env) {
     id: account.id,
     email: account.email,
     role: account.role,
+    mfa_enabled: !!account.mfa_enabled,
     gw2_links: links.results.map((r) => ({
       id: r.id,
       name: r.gw2_account_name,
@@ -554,7 +645,7 @@ async function requireSession(request, env) {
   if (!token) return json({ error: "Non authentifié." }, 401);
 
   const row = await env.DB.prepare(
-    "SELECT accounts.id, accounts.email, accounts.role FROM sessions " +
+    "SELECT accounts.id, accounts.email, accounts.role, accounts.mfa_enabled FROM sessions " +
     "JOIN accounts ON accounts.id = sessions.account_id " +
     "WHERE sessions.token = ? AND sessions.expires_at > datetime('now')"
   ).bind(token).first();
@@ -605,6 +696,73 @@ function timingSafeEqual(a, b) {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+// --- TOTP (RFC 6238), compatible Google Authenticator / Authy / etc. ---
+// Pas de QR code (pas de dépendance externe pour l'encodeur) : le secret est
+// affiché en base32 pour saisie manuelle, supportée par toutes ces applis.
+
+const TOTP_STEP_SECONDS = 30;
+const TOTP_DIGITS = 6;
+const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+function generateTotpSecret() {
+  const bytes = crypto.getRandomValues(new Uint8Array(20)); // 160 bits, standard TOTP
+  return base32Encode(bytes);
+}
+
+function base32Encode(bytes) {
+  let bits = "";
+  for (const b of bytes) bits += b.toString(2).padStart(8, "0");
+  let out = "";
+  for (let i = 0; i < bits.length; i += 5) {
+    const chunk = bits.slice(i, i + 5).padEnd(5, "0");
+    out += BASE32_ALPHABET[parseInt(chunk, 2)];
+  }
+  return out;
+}
+
+function base32Decode(str) {
+  const clean = str.toUpperCase().replace(/=+$/, "");
+  let bits = "";
+  for (const c of clean) {
+    const val = BASE32_ALPHABET.indexOf(c);
+    if (val === -1) continue;
+    bits += val.toString(2).padStart(5, "0");
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  return new Uint8Array(bytes);
+}
+
+async function totpAt(secretBase32, timeStep) {
+  const keyBytes = base32Decode(secretBase32);
+  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+
+  const counter = new ArrayBuffer(8);
+  const counterView = new DataView(counter);
+  // JS numbers can't hold a full 64-bit int, mais largement suffisant ici
+  // (timeStep ne dépassera pas 2^32 avant des milliards d'années).
+  counterView.setUint32(4, timeStep, false);
+
+  const hmac = new Uint8Array(await crypto.subtle.sign("HMAC", key, counter));
+  const offset = hmac[hmac.length - 1] & 0xf;
+  const binary =
+    ((hmac[offset] & 0x7f) << 24) |
+    ((hmac[offset + 1] & 0xff) << 16) |
+    ((hmac[offset + 2] & 0xff) << 8) |
+    (hmac[offset + 3] & 0xff);
+  return String(binary % 10 ** TOTP_DIGITS).padStart(TOTP_DIGITS, "0");
+}
+
+// Tolère ±1 pas (30s) de dérive d'horloge, comme la plupart des implémentations.
+async function verifyTotp(secretBase32, code) {
+  if (!/^\d{6}$/.test(code || "")) return false;
+  const currentStep = Math.floor(Date.now() / 1000 / TOTP_STEP_SECONDS);
+  for (const delta of [0, -1, 1]) {
+    if ((await totpAt(secretBase32, currentStep + delta)) === code) return true;
+  }
+  return false;
 }
 
 // --- Chiffrement des clés API GW2 (AES-256-GCM) ---

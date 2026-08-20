@@ -3,13 +3,29 @@
 -- base existante, la colonne a été ajoutée une fois via un ALTER TABLE à part
 -- (SQLite n'a pas d'ADD COLUMN IF NOT EXISTS, donc pas rejouable ici sans
 -- casser l'application idempotente de ce fichier à chaque déploiement).
+-- password_hash/password_salt restent NOT NULL même pour les comptes créés
+-- via Google : un mot de passe aléatoire inutilisable est généré à la
+-- création plutôt que d'assouplir la contrainte (évite une migration lourde
+-- de colonne sur la table existante).
 CREATE TABLE IF NOT EXISTS accounts (
-  id            TEXT PRIMARY KEY,
-  email         TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
-  password_salt TEXT NOT NULL,
-  role          TEXT NOT NULL DEFAULT 'user',
-  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  id                    TEXT PRIMARY KEY,
+  email                 TEXT NOT NULL UNIQUE,
+  password_hash         TEXT NOT NULL,
+  password_salt         TEXT NOT NULL,
+  role                  TEXT NOT NULL DEFAULT 'user',
+  google_sub            TEXT,
+  mfa_secret_encrypted  TEXT,
+  mfa_enabled           INTEGER NOT NULL DEFAULT 0,
+  created_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_google_sub ON accounts(google_sub) WHERE google_sub IS NOT NULL;
+
+-- Défis MFA temporaires : émis après un mot de passe correct sur un compte
+-- avec MFA actif, avant la validation du code TOTP. Courte durée de vie.
+CREATE TABLE IF NOT EXISTS mfa_challenges (
+  token      TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  expires_at TEXT NOT NULL
 );
 
 -- Sessions actives (cookie httpOnly côté client, token opaque ici)
