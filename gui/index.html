@@ -980,7 +980,7 @@
   // légendaire) — construit une fois depuis les endpoints PUBLICS de GW2
   // (aucune clé nécessaire) et mis en cache 24h en localStorage, partagé par
   // tous les membres qui utilisent ce navigateur.
-  const CATALOG_CACHE_KEY = "gw2_guild_tool_achv_catalog_v1";
+  const CATALOG_CACHE_KEY = "gw2_guild_tool_achv_catalog_v2";
   const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
 
   async function getAchievementCatalog(onProgress) {
@@ -991,7 +991,12 @@
 
     if (onProgress) onProgress("Chargement du catalogue de succès (une fois par jour, ~30s)…");
 
-    const catRes = await fetchGw2("/achievements/categories?ids=all", null);
+    // lang=en forcé : l'API GW2 localise ses réponses selon la langue du
+    // navigateur (Accept-Language), et le matching par nom de catégorie
+    // ci-dessous est écrit contre les noms anglais ("Legendary…", "Daily"…)
+    // — sans ça, un navigateur en français reçoit "Pourfendeur" au lieu de
+    // "Slayer" et le filtre ne matche plus rien, silencieusement.
+    const catRes = await fetchGw2("/achievements/categories?ids=all&lang=en", null);
     if (!catRes.ok) throw new Error("Impossible de charger le catalogue de succès GW2.");
     const categories = catRes.data;
 
