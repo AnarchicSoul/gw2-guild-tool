@@ -61,3 +61,26 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   key     TEXT PRIMARY KEY,
   last_at TEXT NOT NULL
 );
+
+-- CSRF sur le flow OAuth Google (state à usage unique, courte durée de vie)
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state      TEXT PRIMARY KEY,
+  expires_at TEXT NOT NULL
+);
+
+-- Code d'échange à usage unique après /auth/google/callback : évite de
+-- mettre le token de session final dans l'URL de redirection (historique
+-- navigateur, logs, header Referer). kind='login' -> session prête à
+-- récupérer ; kind='link_pending' -> un compte existe déjà avec cet email,
+-- google_sub/google_email restent côté serveur jusqu'à ce que le client
+-- prouve qu'il possède ce compte (mot de passe) puis appelle
+-- /account/google/link avec ce même code, jamais un google_sub fourni par
+-- le client directement.
+CREATE TABLE IF NOT EXISTS oauth_exchange_codes (
+  code         TEXT PRIMARY KEY,
+  kind         TEXT NOT NULL,
+  account_id   TEXT,
+  google_sub   TEXT,
+  google_email TEXT,
+  expires_at   TEXT NOT NULL
+);

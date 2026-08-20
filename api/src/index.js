@@ -53,6 +53,14 @@ export default {
         response = await handleLogout(request, env);
       } else if (url.pathname === "/auth/login/mfa" && request.method === "POST") {
         response = await handleLoginMfa(request, env);
+      } else if (url.pathname === "/auth/google/start" && request.method === "GET") {
+        return await handleGoogleStart(request, env); // redirection directe, pas de JSON/CORS à fusionner
+      } else if (url.pathname === "/auth/google/callback" && request.method === "GET") {
+        return await handleGoogleCallback(request, env, url); // idem
+      } else if (url.pathname === "/auth/google/exchange" && request.method === "POST") {
+        response = await handleGoogleExchange(request, env);
+      } else if (url.pathname === "/account/google/link" && request.method === "POST") {
+        response = await handleGoogleLink(request, env);
       } else if (url.pathname === "/account/change-password" && request.method === "POST") {
         response = await handleChangePassword(request, env);
       } else if (url.pathname === "/account/mfa/setup" && request.method === "POST") {
@@ -274,6 +282,153 @@ async function handleLoginMfa(request, env) {
   await env.DB.prepare("DELETE FROM mfa_challenges WHERE token = ?").bind(challengeToken).run();
   trackEvent(env, "login_mfa", "success");
   return startSession(env, account.id, account.email);
+}
+
+// --- Connexion / inscription via Google (OAuth 2.0, Authorization Code) ---
+
+const GOOGLE_REDIRECT_URI = "https://gw2-guild-api-dev.duval-johan-91.workers.dev/auth/google/callback";
+const GUI_URL = "https://anarchicsoul.github.io/gw2-guild-tool/";
+
+async function handleGoogleStart(request, env) {
+  if (!env.GOOGLE_CLIENT_ID) return json({ error: "Connexion Google non configurée." }, 501);
+
+  const state = randomToken(24);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  await env.DB.prepare("INSERT INTO oauth_states (state, expires_at) VALUES (?, ?)").bind(state, expiresAt).run();
+
+  const params = new URLSearchParams({
+    client_id: env.GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: "code",
+    scope: "openid email",
+    state,
+    prompt: "select_account",
+  });
+  return Response.redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params.toString(), 302);
+}
+
+async function handleGoogleCallback(request, env, url) {
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  const errorParam = url.searchParams.get("error");
+
+  const fail = (reason) => Response.redirect(GUI_URL + "?oauth_error=" + encodeURIComponent(reason), 302);
+
+  if (errorParam) return fail(errorParam);
+  if (!code || !state) return fail("missing_params");
+
+  const stateRow = await env.DB.prepare(
+    "SELECT state FROM oauth_states WHERE state = ? AND expires_at > datetime('now')"
+  ).bind(state).first();
+  if (!stateRow) return fail("invalid_state");
+  await env.DB.prepare("DELETE FROM oauth_states WHERE state = ?").bind(state).run();
+
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: GOOGLE_REDIRECT_URI,
+      grant_type: "authorization_code",
+    }),
+  });
+  if (!tokenRes.ok) return fail("token_exchange_failed");
+  const tokenData = await tokenRes.json();
+
+  // Le profil est récupéré via l'API userinfo avec l'access_token reçu
+  // serveur-à-serveur (pas de décodage de JWT côté maison à faire confiance).
+  const profileRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: { Authorization: "Bearer " + tokenData.access_token },
+  });
+  if (!profileRes.ok) return fail("profile_fetch_failed");
+  const profile = await profileRes.json();
+  if (!profile.email_verified) return fail("email_not_verified");
+
+  const exchangeCode = randomToken(24);
+  const exchangeExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+  const bySub = await env.DB.prepare("SELECT id, email FROM accounts WHERE google_sub = ?").bind(profile.sub).first();
+  if (bySub) {
+    await env.DB.prepare("INSERT INTO oauth_exchange_codes (code, kind, account_id, expires_at) VALUES (?, 'login', ?, ?)")
+      .bind(exchangeCode, bySub.id, exchangeExpiresAt).run();
+    trackEvent(env, "google_login", "success");
+    return Response.redirect(GUI_URL + "?oauth_code=" + exchangeCode, 302);
+  }
+
+  const byEmail = await env.DB.prepare("SELECT id FROM accounts WHERE email = ?").bind(profile.email).first();
+  if (byEmail) {
+    // Compte existant sur cet email, pas encore lié à ce compte Google : le
+    // client devra prouver qu'il le possède (mot de passe) avant de finaliser
+    // la liaison — google_sub/google_email restent en base, jamais renvoyés
+    // au client tels quels.
+    await env.DB.prepare(
+      "INSERT INTO oauth_exchange_codes (code, kind, google_sub, google_email, expires_at) VALUES (?, 'link_pending', ?, ?, ?)"
+    ).bind(exchangeCode, profile.sub, profile.email, exchangeExpiresAt).run();
+    trackEvent(env, "google_login", "link_pending");
+    return Response.redirect(GUI_URL + "?oauth_code=" + exchangeCode, 302);
+  }
+
+  // Nouveau compte : aucun mot de passe utilisable (connexion Google uniquement
+  // pour l'instant), mais password_hash/password_salt restent NOT NULL.
+  const id = crypto.randomUUID();
+  const { hash, salt } = await hashPassword(randomToken(32));
+  await env.DB.prepare("INSERT INTO accounts (id, email, password_hash, password_salt, google_sub) VALUES (?, ?, ?, ?, ?)")
+    .bind(id, profile.email, hash, salt, profile.sub).run();
+  await env.DB.prepare("INSERT INTO oauth_exchange_codes (code, kind, account_id, expires_at) VALUES (?, 'login', ?, ?)")
+    .bind(exchangeCode, id, exchangeExpiresAt).run();
+
+  trackEvent(env, "google_register", "success");
+  return Response.redirect(GUI_URL + "?oauth_code=" + exchangeCode, 302);
+}
+
+async function handleGoogleExchange(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const code = body.code || "";
+
+  const row = await env.DB.prepare(
+    "SELECT kind, account_id, google_email FROM oauth_exchange_codes WHERE code = ? AND expires_at > datetime('now')"
+  ).bind(code).first();
+  if (!row) return json({ error: "Code invalide ou expiré." }, 401);
+
+  if (row.kind === "login") {
+    await env.DB.prepare("DELETE FROM oauth_exchange_codes WHERE code = ?").bind(code).run();
+    const account = await env.DB.prepare("SELECT id, email FROM accounts WHERE id = ?").bind(row.account_id).first();
+    if (!account) return json({ error: "Compte introuvable." }, 404);
+    return startSession(env, account.id, account.email);
+  }
+
+  // link_pending : on garde la ligne (pas encore consommée) — le client doit
+  // se connecter par mot de passe puis rappeler /account/google/link avec ce
+  // même code pour finaliser.
+  return json({ link_required: true, email: row.google_email, link_code: code });
+}
+
+async function handleGoogleLink(request, env) {
+  const account = await requireSession(request, env);
+  if (account instanceof Response) return account;
+
+  const body = await request.json().catch(() => ({}));
+  const linkCode = body.link_code || "";
+
+  const row = await env.DB.prepare(
+    "SELECT google_sub, google_email FROM oauth_exchange_codes WHERE code = ? AND kind = 'link_pending' AND expires_at > datetime('now')"
+  ).bind(linkCode).first();
+  if (!row) return json({ error: "Code de liaison invalide ou expiré." }, 401);
+
+  // Le compte qui finalise la liaison doit être celui dont l'email correspond
+  // à ce que Google a renvoyé pendant le VRAI échange OAuth — jamais un
+  // google_sub arbitraire fourni par le client.
+  if (row.google_email !== account.email) {
+    return json({ error: "Cette liaison ne correspond pas à ton compte." }, 403);
+  }
+
+  await env.DB.prepare("DELETE FROM oauth_exchange_codes WHERE code = ?").bind(linkCode).run();
+  await env.DB.prepare("UPDATE accounts SET google_sub = ? WHERE id = ?").bind(row.google_sub, account.id).run();
+
+  trackEvent(env, "google_link", "success");
+  return json({ ok: true });
 }
 
 async function handleMe(request, env) {

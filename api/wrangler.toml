@@ -27,3 +27,6 @@ dataset = "gw2_guild_tool_events"
 # premier admin en place — voir README pour la procédure complète.
 [vars]
 SUPER_ADMIN_MODE = "false"
+# Le client ID OAuth n'est pas sensible (il apparaît en clair dans l'URL de
+# redirection vers Google) — seul GOOGLE_CLIENT_SECRET est un secret Worker.
+GOOGLE_CLIENT_ID = "377554935402-pb47t575sd52framek4qe7quj1fvr485.apps.googleusercontent.com"
