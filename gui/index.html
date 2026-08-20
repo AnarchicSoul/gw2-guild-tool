@@ -792,7 +792,7 @@
     $("links-section").classList.add("hidden");
     $("matches-section").classList.add("hidden");
     $("account-section").classList.add("hidden");
-    $("login-form").classList.remove("hidden");
+    switchTab("login");
     $("mfa-login-form").classList.add("hidden");
     pendingMfaChallenge = null;
     $("login-form").reset();
