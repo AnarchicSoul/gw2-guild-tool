@@ -1,0 +1,30 @@
+name: One-off DB migration
+
+# Migration manuelle à usage unique — pas dans deploy.yml volontairement (ADD
+# COLUMN n'est pas rejouable en SQLite, contrairement au CREATE TABLE IF NOT
+# EXISTS de schema.sql). À supprimer une fois exécuté.
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install
+
+      - name: Add oauth_states.intent
+        run: npx wrangler d1 execute gw2-guild-tool-dev --remote --command "ALTER TABLE oauth_states ADD COLUMN intent TEXT NOT NULL DEFAULT 'login'"
+
+      - name: Add oauth_states.account_id
+        run: npx wrangler d1 execute gw2-guild-tool-dev --remote --command "ALTER TABLE oauth_states ADD COLUMN account_id TEXT"
