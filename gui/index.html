@@ -127,6 +127,92 @@
   }
   .role-pill.admin { color: var(--gold); }
 
+  .chart-block { margin: 1.25rem 0; }
+  .chart-block h3 {
+    font-size: 0.78rem;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 0.6rem;
+    font-weight: 700;
+  }
+
+  .bar-chart-v {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 110px;
+    padding: 0.6rem 0.6rem 0;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    overflow-x: auto;
+  }
+  .bar-chart-v .bar {
+    flex: 1 0 8px;
+    min-width: 8px;
+    background: var(--ok);
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+  }
+  .bar-chart-v .bar.has-errors { background: var(--danger); }
+
+  .stat-row { display: flex; gap: 0.75rem; margin: 1rem 0; flex-wrap: wrap; }
+  .stat-tile {
+    flex: 1;
+    min-width: 120px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 0.7rem 0.9rem;
+  }
+  .stat-tile .stat-value {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--gold);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-tile .stat-label {
+    font-size: 0.7rem;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 0.2rem;
+  }
+
+  .bar-chart-h { display: flex; flex-direction: column; gap: 0.5rem; }
+  .bar-chart-h .bar-row {
+    display: grid;
+    grid-template-columns: 150px 1fr 3rem;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.82rem;
+  }
+  .bar-chart-h .bar-label {
+    color: var(--ink-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .bar-chart-h .bar-track {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    height: 0.9rem;
+    overflow: hidden;
+  }
+  .bar-chart-h .bar-fill { display: block; height: 100%; }
+  .bar-chart-h .bar-fill.success { background: var(--ok); }
+  .bar-chart-h .bar-fill.failure { background: var(--danger); }
+  .bar-chart-h .bar-fill.other { background: var(--gold); }
+  .bar-chart-h .bar-count {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-dim);
+    font-size: 0.78rem;
+  }
+
   .status-item {
     display: inline-flex;
     align-items: center;
@@ -319,13 +405,19 @@
 
     <div id="analytics-panel" class="hidden">
       <button type="button" class="ghost" id="refresh-analytics">Rafraîchir</button>
-      <div class="table-wrap" style="margin-top:0.75rem;">
-        <table class="user-table">
-          <thead><tr><th>Événement</th><th>Résultat</th><th>Nombre</th></tr></thead>
-          <tbody id="analytics-list"></tbody>
-        </table>
-      </div>
       <div class="msg" id="analytics-msg"></div>
+
+      <div class="chart-block">
+        <h3>Requêtes — dernières 24h</h3>
+        <div class="bar-chart-v" id="requests-chart"></div>
+      </div>
+
+      <div class="stat-row" id="latency-stats"></div>
+
+      <div class="chart-block">
+        <h3>Événements applicatifs</h3>
+        <div class="bar-chart-h" id="events-chart"></div>
+      </div>
     </div>
 
     <div id="user-mgmt-panel" class="hidden">
@@ -703,24 +795,72 @@
 
   // --- Dashboard analytics ---
   async function loadAnalytics() {
-    const tbody = $("analytics-list");
     setMsg($("analytics-msg"), "");
-    tbody.innerHTML = '<tr><td colspan="3"><span class="spinner"></span>Chargement…</td></tr>';
+    $("requests-chart").innerHTML = '<span class="msg info" style="display:block;"><span class="spinner"></span>Chargement…</span>';
+    $("latency-stats").innerHTML = "";
+    $("events-chart").innerHTML = "";
+
     try {
-      const data = await api("/admin/analytics");
-      if (data.rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3">Pas encore de données.</td></tr>';
-        return;
-      }
-      tbody.innerHTML = data.rows.map((r) =>
-        "<tr><td>" + escapeHtml(r.event) + "</td><td>" + escapeHtml(r.outcome) + "</td><td>" + escapeHtml(String(r.n)) + "</td></tr>"
-      ).join("");
+      const [metrics, events] = await Promise.all([api("/admin/metrics"), api("/admin/analytics")]);
+      renderRequestsChart(metrics.hours);
+      renderLatencyStats(metrics.hours);
+      renderEventsChart(events.rows);
     } catch (err) {
-      tbody.innerHTML = "";
       setMsg($("analytics-msg"), err.message, "error");
     }
   }
   $("refresh-analytics").addEventListener("click", loadAnalytics);
+
+  function renderRequestsChart(hours) {
+    const el = $("requests-chart");
+    if (!hours || hours.length === 0) {
+      el.innerHTML = '<span class="msg info" style="display:block;">Pas encore de données.</span>';
+      return;
+    }
+    const max = Math.max(...hours.map((h) => h.requests), 1);
+    el.innerHTML = hours.map((h) => {
+      const pct = Math.max(4, Math.round((h.requests / max) * 100));
+      const label = new Date(h.hour).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit" });
+      const title = label + " — " + h.requests + " requête(s)" + (h.errors ? ", " + h.errors + " erreur(s)" : "");
+      return '<div class="bar' + (h.errors > 0 ? " has-errors" : "") + '" style="height:' + pct + '%" title="' + escapeHtml(title) + '"></div>';
+    }).join("");
+  }
+
+  function renderLatencyStats(hours) {
+    const el = $("latency-stats");
+    if (!hours || hours.length === 0) { el.innerHTML = ""; return; }
+    const last = hours[hours.length - 1];
+    const totalRequests = hours.reduce((s, h) => s + h.requests, 0);
+    const totalErrors = hours.reduce((s, h) => s + h.errors, 0);
+    const tiles = [
+      { label: "Requêtes (24h)", value: totalRequests },
+      { label: "Erreurs (24h)", value: totalErrors },
+      { label: "CPU p50 (dernière h.)", value: Math.round(last.cpuTimeP50) + " µs" },
+      { label: "CPU p99 (dernière h.)", value: Math.round(last.cpuTimeP99) + " µs" },
+    ];
+    el.innerHTML = tiles.map((t) =>
+      '<div class="stat-tile"><div class="stat-value">' + escapeHtml(String(t.value)) + '</div><div class="stat-label">' + escapeHtml(t.label) + "</div></div>"
+    ).join("");
+  }
+
+  function renderEventsChart(rows) {
+    const el = $("events-chart");
+    if (!rows || rows.length === 0) {
+      el.innerHTML = '<span class="msg info" style="display:block;">Pas encore de données.</span>';
+      return;
+    }
+    const max = Math.max(...rows.map((r) => Number(r.n)), 1);
+    el.innerHTML = rows.map((r) => {
+      const n = Number(r.n);
+      const pct = Math.max(3, Math.round((n / max) * 100));
+      const cls = r.outcome === "success" ? "success" : r.outcome === "failure" ? "failure" : "other";
+      return (
+        '<div class="bar-row"><span class="bar-label">' + escapeHtml(r.event) + " · " + escapeHtml(r.outcome) + "</span>" +
+        '<span class="bar-track"><span class="bar-fill ' + cls + '" style="width:' + pct + '%"></span></span>' +
+        '<span class="bar-count">' + n + "</span></div>"
+      );
+    }).join("");
+  }
 
   // --- Gestion des utilisateurs (paginée) ---
   async function loadAdminUsers(page) {

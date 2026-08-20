@@ -73,6 +73,8 @@ export default {
         response = await handleAdminResetPassword(request, env);
       } else if (url.pathname === "/admin/analytics" && request.method === "GET") {
         response = await handleAdminAnalytics(request, env);
+      } else if (url.pathname === "/admin/metrics" && request.method === "GET") {
+        response = await handleAdminMetrics(request, env);
       } else {
         response = json({ error: "Route introuvable." }, 404);
       }
@@ -384,6 +386,75 @@ async function handleAdminAnalytics(request, env) {
 
   const data = await res.json();
   return json({ rows: data.data || [] });
+}
+
+// Métriques natives du Worker (requêtes/erreurs/latence par heure) via l'API
+// GraphQL Analytics — même token CF_ANALYTICS_TOKEN, un scope suffit pour
+// les deux (Account > Analytics > Read couvre Analytics Engine ET GraphQL).
+async function handleAdminMetrics(request, env) {
+  const admin = await requireAdmin(request, env);
+  if (admin instanceof Response) return admin;
+
+  if (!env.CF_ANALYTICS_TOKEN) {
+    return json({ error: "Analytics non configuré (secret CF_ANALYTICS_TOKEN manquant)." }, 501);
+  }
+
+  const end = new Date();
+  const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+
+  const gqlQuery = `
+    query ($accountTag: string!, $scriptName: string!, $start: string!, $end: string!) {
+      viewer {
+        accounts(filter: { accountTag: $accountTag }) {
+          workersInvocationsAdaptive(
+            limit: 200
+            filter: { scriptName: $scriptName, datetime_geq: $start, datetime_leq: $end }
+            orderBy: [datetimeHour_ASC]
+          ) {
+            dimensions { datetimeHour status }
+            sum { requests errors }
+            quantiles { cpuTimeP50 cpuTimeP99 }
+          }
+        }
+      }
+    }`;
+
+  const res = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.CF_ANALYTICS_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query: gqlQuery,
+      variables: {
+        accountTag: CLOUDFLARE_ACCOUNT_ID,
+        scriptName: "gw2-guild-api-dev",
+        start: start.toISOString(),
+        end: end.toISOString(),
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    return json({ error: "Erreur requête métriques.", detail: detail.slice(0, 300) }, 502);
+  }
+
+  const data = await res.json();
+  if (data.errors) return json({ error: "Erreur GraphQL.", detail: JSON.stringify(data.errors).slice(0, 300) }, 502);
+
+  const rows = data.data?.viewer?.accounts?.[0]?.workersInvocationsAdaptive || [];
+
+  // Regroupe par heure (les statuts success/erreur arrivent en lignes séparées).
+  const byHour = {};
+  for (const row of rows) {
+    const hour = row.dimensions.datetimeHour;
+    byHour[hour] = byHour[hour] || { hour, requests: 0, errors: 0, cpuTimeP50: 0, cpuTimeP99: 0 };
+    byHour[hour].requests += row.sum.requests;
+    byHour[hour].errors += row.sum.errors;
+    byHour[hour].cpuTimeP50 = Math.max(byHour[hour].cpuTimeP50, row.quantiles.cpuTimeP50 || 0);
+    byHour[hour].cpuTimeP99 = Math.max(byHour[hour].cpuTimeP99, row.quantiles.cpuTimeP99 || 0);
+  }
+
+  return json({ hours: Object.values(byHour).sort((a, b) => a.hour.localeCompare(b.hour)) });
 }
 
 const ADMIN_USERS_PAGE_SIZE = 20;
