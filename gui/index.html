@@ -83,12 +83,25 @@
     margin-bottom: 1.1rem;
   }
 
+  .table-wrap { overflow-x: auto; }
+
   .user-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.88rem;
     margin-bottom: 1rem;
   }
+
+  .row-action {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.74rem;
+    background: transparent;
+    border-color: var(--line);
+    color: var(--ink-dim);
+    margin-right: 0.3rem;
+  }
+  .row-action.danger { color: var(--danger); }
+  .row-action:hover { background: var(--surface-2); }
   .user-table th {
     text-align: left;
     padding: 0.5rem 0.6rem;
@@ -266,6 +279,65 @@
     </div>
   </header>
 
+  <section id="account-section" class="hidden">
+    <h2>Mon compte</h2>
+
+    <div class="status-row" id="status-row">
+      <span class="status-item" id="status-app"><span class="status-dot"></span>Application</span>
+      <span class="status-item" id="status-db"><span class="status-dot"></span>Base de données</span>
+      <span class="status-item" id="status-gw2"><span class="status-dot"></span>Guild Wars 2</span>
+    </div>
+
+    <div class="row" style="margin-bottom:1rem;">
+      <button type="button" class="ghost" id="toggle-password-form">Changer le mot de passe</button>
+      <button type="button" class="ghost" id="mfa-btn" disabled title="Bientôt disponible">Activer le MFA</button>
+      <button type="button" class="ghost hidden admin-only" id="toggle-promote-form">Ajouter un admin</button>
+      <button type="button" class="ghost hidden admin-only" id="toggle-analytics">Dashboard analytics</button>
+      <button type="button" class="ghost hidden admin-only" id="toggle-user-mgmt">Gestion des utilisateurs</button>
+    </div>
+
+    <form id="password-form" class="hidden">
+      <div class="field">
+        <label for="password-current">Mot de passe actuel</label>
+        <input type="password" id="password-current" autocomplete="current-password">
+      </div>
+      <div class="field">
+        <label for="password-new">Nouveau mot de passe (10 caractères minimum)</label>
+        <input type="password" id="password-new" minlength="10" autocomplete="new-password">
+      </div>
+      <button type="submit" id="password-submit">Mettre à jour</button>
+      <div class="msg" id="password-msg"></div>
+    </form>
+
+    <div id="promote-panel" class="hidden">
+      <form id="promote-form" class="row">
+        <input type="email" id="promote-email" placeholder="email@exemple.com" autocomplete="off" style="flex:1; min-width:220px;">
+        <button type="submit" id="promote-submit">Promouvoir admin</button>
+      </form>
+      <div class="msg" id="promote-msg"></div>
+    </div>
+
+    <div id="analytics-panel" class="hidden">
+      <button type="button" class="ghost" id="refresh-analytics">Rafraîchir</button>
+      <div class="table-wrap" style="margin-top:0.75rem;">
+        <table class="user-table">
+          <thead><tr><th>Événement</th><th>Résultat</th><th>Nombre</th></tr></thead>
+          <tbody id="analytics-list"></tbody>
+        </table>
+      </div>
+      <div class="msg" id="analytics-msg"></div>
+    </div>
+
+    <div id="user-mgmt-panel" class="hidden">
+      <table class="user-table">
+        <thead><tr><th>Email</th><th>Rôle</th><th>Inscrit le</th><th></th></tr></thead>
+        <tbody id="admin-user-list"></tbody>
+      </table>
+      <div class="row" id="admin-pagination" style="margin-top:0.5rem;"></div>
+      <div class="msg" id="admin-msg"></div>
+    </div>
+  </section>
+
   <section id="auth-section">
     <div class="tabs">
       <button type="button" class="active" id="tab-login">Connexion</button>
@@ -319,28 +391,6 @@
     <div id="matches-result" style="margin-top:1rem;"></div>
   </section>
 
-  <section id="admin-section" class="hidden">
-    <h2>Panneau admin</h2>
-
-    <div class="status-row" id="status-row">
-      <span class="status-item" id="status-app"><span class="status-dot"></span>Application</span>
-      <span class="status-item" id="status-db"><span class="status-dot"></span>Base de données</span>
-      <span class="status-item" id="status-gw2"><span class="status-dot"></span>Guild Wars 2</span>
-    </div>
-
-    <table class="user-table">
-      <thead>
-        <tr><th>Email</th><th>Rôle</th><th>Inscrit le</th></tr>
-      </thead>
-      <tbody id="admin-user-list"></tbody>
-    </table>
-
-    <form id="promote-form" class="row">
-      <input type="email" id="promote-email" placeholder="email@exemple.com" autocomplete="off" style="flex:1; min-width:220px;">
-      <button type="submit" id="promote-submit">Promouvoir admin</button>
-    </form>
-    <div class="msg" id="admin-msg"></div>
-  </section>
 </main>
 
 <script>
@@ -572,15 +622,12 @@
     $("auth-section").classList.add("hidden");
     $("links-section").classList.remove("hidden");
     $("matches-section").classList.remove("hidden");
+    $("account-section").classList.remove("hidden");
     loadMatches();
+    checkStatus();
 
-    if (me.role === "admin") {
-      $("admin-section").classList.remove("hidden");
-      checkStatus();
-      loadAdminUsers();
-    } else {
-      $("admin-section").classList.add("hidden");
-    }
+    const isAdmin = me.role === "admin";
+    document.querySelectorAll(".admin-only").forEach((el) => el.classList.toggle("hidden", !isAdmin));
   }
 
   function showLoggedOut() {
@@ -588,47 +635,149 @@
     $("auth-section").classList.remove("hidden");
     $("links-section").classList.add("hidden");
     $("matches-section").classList.add("hidden");
-    $("admin-section").classList.add("hidden");
+    $("account-section").classList.add("hidden");
     $("login-form").reset();
     $("register-form").reset();
   }
-
-  // --- Admin ---
-  async function loadAdminUsers() {
-    try {
-      const data = await api("/admin/users");
-      const tbody = $("admin-user-list");
-      tbody.innerHTML = data.users.map((u) =>
-        "<tr><td>" + escapeHtml(u.email) + '</td><td><span class="role-pill' + (u.role === "admin" ? " admin" : "") + '">' + u.role + "</span></td><td>" + escapeHtml(u.created_at) + "</td></tr>"
-      ).join("");
-    } catch (err) {
-      setMsg($("admin-msg"), err.message, "error");
-    }
-  }
-
-  $("promote-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const btn = $("promote-submit");
-    const emailInput = $("promote-email");
-    setMsg($("admin-msg"), "");
-    btn.disabled = true;
-    try {
-      await api("/admin/promote", { method: "POST", body: JSON.stringify({ email: emailInput.value.trim() }) });
-      emailInput.value = "";
-      setMsg($("admin-msg"), "Promu admin.", "ok");
-      loadAdminUsers();
-    } catch (err) {
-      setMsg($("admin-msg"), err.message, "error");
-    } finally {
-      btn.disabled = false;
-    }
-  });
 
   function escapeHtml(str) {
     return String(str).replace(/[&<>"']/g, (c) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
     }[c]));
   }
+
+  // --- Toggles des sous-panneaux ---
+  function toggle(btnId, panelId, onOpen) {
+    $(btnId).addEventListener("click", () => {
+      const panel = $(panelId);
+      const nowHidden = !panel.classList.contains("hidden");
+      panel.classList.toggle("hidden", nowHidden);
+      if (!nowHidden && onOpen) onOpen();
+    });
+  }
+  toggle("toggle-password-form", "password-form");
+  toggle("toggle-promote-form", "promote-panel");
+  toggle("toggle-analytics", "analytics-panel", loadAnalytics);
+  toggle("toggle-user-mgmt", "user-mgmt-panel", () => loadAdminUsers(1));
+
+  // --- Changement de mot de passe (universel) ---
+  $("password-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("password-submit");
+    setMsg($("password-msg"), "");
+    btn.disabled = true;
+    try {
+      await api("/account/change-password", {
+        method: "POST",
+        body: JSON.stringify({
+          current_password: $("password-current").value,
+          new_password: $("password-new").value,
+        }),
+      });
+      $("password-form").reset();
+      setMsg($("password-msg"), "Mot de passe mis à jour.", "ok");
+    } catch (err) {
+      setMsg($("password-msg"), err.message, "error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // --- Promotion admin ---
+  $("promote-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("promote-submit");
+    const emailInput = $("promote-email");
+    setMsg($("promote-msg"), "");
+    btn.disabled = true;
+    try {
+      await api("/admin/promote", { method: "POST", body: JSON.stringify({ email: emailInput.value.trim() }) });
+      emailInput.value = "";
+      setMsg($("promote-msg"), "Promu admin.", "ok");
+    } catch (err) {
+      setMsg($("promote-msg"), err.message, "error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // --- Dashboard analytics ---
+  async function loadAnalytics() {
+    const tbody = $("analytics-list");
+    setMsg($("analytics-msg"), "");
+    tbody.innerHTML = '<tr><td colspan="3"><span class="spinner"></span>Chargement…</td></tr>';
+    try {
+      const data = await api("/admin/analytics");
+      if (data.rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3">Pas encore de données.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.rows.map((r) =>
+        "<tr><td>" + escapeHtml(r.event) + "</td><td>" + escapeHtml(r.outcome) + "</td><td>" + escapeHtml(String(r.n)) + "</td></tr>"
+      ).join("");
+    } catch (err) {
+      tbody.innerHTML = "";
+      setMsg($("analytics-msg"), err.message, "error");
+    }
+  }
+  $("refresh-analytics").addEventListener("click", loadAnalytics);
+
+  // --- Gestion des utilisateurs (paginée) ---
+  async function loadAdminUsers(page) {
+    const tbody = $("admin-user-list");
+    setMsg($("admin-msg"), "");
+    try {
+      const data = await api("/admin/users?page=" + page);
+      tbody.innerHTML = data.users.map((u) =>
+        "<tr><td>" + escapeHtml(u.email) + '</td><td><span class="role-pill' + (u.role === "admin" ? " admin" : "") + '">' + u.role + "</span></td><td>" + escapeHtml(u.created_at) + '</td><td>' +
+        '<button type="button" class="row-action" data-action="reset" data-id="' + u.id + '" data-email="' + escapeHtml(u.email) + '">Reset mdp</button>' +
+        '<button type="button" class="row-action danger" data-action="delete" data-id="' + u.id + '" data-email="' + escapeHtml(u.email) + '">Supprimer</button>' +
+        "</td></tr>"
+      ).join("");
+
+      const pager = $("admin-pagination");
+      pager.innerHTML = "";
+      if (data.totalPages > 1) {
+        for (let p = 1; p <= data.totalPages; p++) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "ghost" + (p === data.page ? "" : "");
+          b.textContent = p;
+          if (p === data.page) b.disabled = true;
+          b.addEventListener("click", () => loadAdminUsers(p));
+          pager.appendChild(b);
+        }
+      }
+    } catch (err) {
+      setMsg($("admin-msg"), err.message, "error");
+    }
+  }
+
+  $("admin-user-list").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const { action, id, email } = btn.dataset;
+    setMsg($("admin-msg"), "");
+
+    if (action === "delete") {
+      if (!confirm("Supprimer définitivement le compte " + email + " ?")) return;
+      try {
+        await api("/admin/users/delete", { method: "POST", body: JSON.stringify({ id }) });
+        loadAdminUsers(1);
+      } catch (err) {
+        setMsg($("admin-msg"), err.message, "error");
+      }
+    } else if (action === "reset") {
+      const newPassword = prompt("Nouveau mot de passe pour " + email + " (10 caractères minimum) :");
+      if (!newPassword) return;
+      try {
+        await api("/admin/users/reset-password", { method: "POST", body: JSON.stringify({ id, new_password: newPassword }) });
+        setMsg($("admin-msg"), "Mot de passe réinitialisé pour " + email + ".", "ok");
+      } catch (err) {
+        setMsg($("admin-msg"), err.message, "error");
+      }
+    }
+  });
 
   (async () => {
     if (!getToken()) {
