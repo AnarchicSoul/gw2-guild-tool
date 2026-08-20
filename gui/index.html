@@ -1105,11 +1105,14 @@
   }
 
   (async () => {
+    // showLoggedOut() réinitialise les formulaires (login-form.reset()) : il
+    // faut l'appeler AVANT handleOAuthReturn, sinon ça efface l'email et le
+    // message qu'il vient de préremplir pour le cas "liaison requise".
+    if (!getToken()) showLoggedOut();
+
     const loggedInViaOAuth = await handleOAuthReturn();
-    if (!loggedInViaOAuth && !getToken()) {
-      showLoggedOut();
-      return;
-    }
+    if (!loggedInViaOAuth && !getToken()) return;
+
     try {
       await loadDashboard();
     } catch (e) {
