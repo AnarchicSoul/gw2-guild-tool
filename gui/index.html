@@ -66,7 +66,9 @@
   main { width: 100%; max-width: 640px; }
 
   header {
-    margin-bottom: 0.9rem;
+    margin-bottom: 2rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 2px solid var(--gold);
     display: flex;
     justify-content: space-between;
     align-items: baseline;
@@ -78,10 +80,39 @@
     display: flex;
     gap: 1.1rem;
     flex-wrap: wrap;
-    margin-bottom: 2rem;
-    padding-bottom: 1.25rem;
-    border-bottom: 2px solid var(--gold);
+    margin-bottom: 1.1rem;
   }
+
+  .user-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    margin-bottom: 1rem;
+  }
+  .user-table th {
+    text-align: left;
+    padding: 0.5rem 0.6rem;
+    background: var(--surface-2);
+    color: var(--ink-dim);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--line);
+  }
+  .user-table td {
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .role-pill {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    border: 1px solid currentColor;
+    color: var(--ink-dim);
+  }
+  .role-pill.admin { color: var(--gold); }
 
   .status-item {
     display: inline-flex;
@@ -235,12 +266,6 @@
     </div>
   </header>
 
-  <div class="status-row" id="status-row">
-    <span class="status-item" id="status-app"><span class="status-dot"></span>Application</span>
-    <span class="status-item" id="status-db"><span class="status-dot"></span>Base de données</span>
-    <span class="status-item" id="status-gw2"><span class="status-dot"></span>Guild Wars 2</span>
-  </div>
-
   <section id="auth-section">
     <div class="tabs">
       <button type="button" class="active" id="tab-login">Connexion</button>
@@ -292,6 +317,29 @@
     </p>
     <button type="button" class="ghost" id="refresh-matches">Rafraîchir</button>
     <div id="matches-result" style="margin-top:1rem;"></div>
+  </section>
+
+  <section id="admin-section" class="hidden">
+    <h2>Panneau admin</h2>
+
+    <div class="status-row" id="status-row">
+      <span class="status-item" id="status-app"><span class="status-dot"></span>Application</span>
+      <span class="status-item" id="status-db"><span class="status-dot"></span>Base de données</span>
+      <span class="status-item" id="status-gw2"><span class="status-dot"></span>Guild Wars 2</span>
+    </div>
+
+    <table class="user-table">
+      <thead>
+        <tr><th>Email</th><th>Rôle</th><th>Inscrit le</th></tr>
+      </thead>
+      <tbody id="admin-user-list"></tbody>
+    </table>
+
+    <form id="promote-form" class="row">
+      <input type="email" id="promote-email" placeholder="email@exemple.com" autocomplete="off" style="flex:1; min-width:220px;">
+      <button type="submit" id="promote-submit">Promouvoir admin</button>
+    </form>
+    <div class="msg" id="admin-msg"></div>
   </section>
 </main>
 
@@ -520,11 +568,19 @@
   }
 
   async function loadDashboard() {
-    await refreshMe();
+    const me = await refreshMe();
     $("auth-section").classList.add("hidden");
     $("links-section").classList.remove("hidden");
     $("matches-section").classList.remove("hidden");
     loadMatches();
+
+    if (me.role === "admin") {
+      $("admin-section").classList.remove("hidden");
+      checkStatus();
+      loadAdminUsers();
+    } else {
+      $("admin-section").classList.add("hidden");
+    }
   }
 
   function showLoggedOut() {
@@ -532,17 +588,47 @@
     $("auth-section").classList.remove("hidden");
     $("links-section").classList.add("hidden");
     $("matches-section").classList.add("hidden");
+    $("admin-section").classList.add("hidden");
     $("login-form").reset();
     $("register-form").reset();
   }
+
+  // --- Admin ---
+  async function loadAdminUsers() {
+    try {
+      const data = await api("/admin/users");
+      const tbody = $("admin-user-list");
+      tbody.innerHTML = data.users.map((u) =>
+        "<tr><td>" + escapeHtml(u.email) + '</td><td><span class="role-pill' + (u.role === "admin" ? " admin" : "") + '">' + u.role + "</span></td><td>" + escapeHtml(u.created_at) + "</td></tr>"
+      ).join("");
+    } catch (err) {
+      setMsg($("admin-msg"), err.message, "error");
+    }
+  }
+
+  $("promote-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("promote-submit");
+    const emailInput = $("promote-email");
+    setMsg($("admin-msg"), "");
+    btn.disabled = true;
+    try {
+      await api("/admin/promote", { method: "POST", body: JSON.stringify({ email: emailInput.value.trim() }) });
+      emailInput.value = "";
+      setMsg($("admin-msg"), "Promu admin.", "ok");
+      loadAdminUsers();
+    } catch (err) {
+      setMsg($("admin-msg"), err.message, "error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   function escapeHtml(str) {
     return String(str).replace(/[&<>"']/g, (c) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
     }[c]));
   }
-
-  checkStatus();
 
   (async () => {
     if (!getToken()) {
